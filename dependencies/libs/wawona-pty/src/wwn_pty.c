@@ -1,5 +1,9 @@
 #include "wwn_pty.h"
 
+#if defined(__ANDROID__)
+#define _POSIX_C_SOURCE 200809L
+#endif
+
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -926,8 +930,7 @@ spawn_on_slave(const char *shell_path, char *const argv[], int slave_fd,
 
 #if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
 	return ios_spawn_zsh_inprocess(shell_path, argv, slave_fd, pace_read_fd, envp);
-#endif
-
+#else
 	if (argv == NULL || argv[0] == NULL) {
 		errno = EINVAL;
 		return -1;
@@ -962,31 +965,15 @@ spawn_on_slave(const char *shell_path, char *const argv[], int slave_fd,
 
 	if (pace_read_fd >= 0) {
 		snprintf(pace_script, sizeof pace_script,
-#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
-		         "read -r _ <&3; exec %s -i", shell_path);
-#else
 		         "read -r _ <&3; exec %s", shell_path);
-#endif
 		spawn_argv[0] = (char *)shell_path;
 		spawn_argv[1] = (char *)"-c";
 		spawn_argv[2] = pace_script;
 		spawn_argv[3] = NULL;
 	} else {
-#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
-		spawn_argv[0] = (char *)shell_path;
-		if (argv[1] == NULL) {
-			spawn_argv[1] = (char *)"-i";
-			spawn_argv[2] = NULL;
-		} else {
-			for (i = 0; argv[i] != NULL && i < 6; i++)
-				spawn_argv[i] = argv[i];
-			spawn_argv[i] = NULL;
-		}
-#else
 		for (i = 0; argv[i] != NULL && i < 6; i++)
 			spawn_argv[i] = argv[i];
 		spawn_argv[i] = NULL;
-#endif
 	}
 
 	if (envp == NULL)
@@ -1003,6 +990,7 @@ spawn_on_slave(const char *shell_path, char *const argv[], int slave_fd,
 	posix_spawnattr_destroy(&attrs);
 	posix_spawn_file_actions_destroy(&actions);
 	return pid;
+#endif
 }
 
 pid_t
