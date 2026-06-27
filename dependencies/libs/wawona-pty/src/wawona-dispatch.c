@@ -13,6 +13,8 @@
  *     `coreutils` Cargo feature (e.g. watchOS) the symbol is absent and we
  *     simply report WWN_DISPATCH_NOT_HANDLED, so libwwn-pty.a stays
  *     self-contained even though it is -force_load'd.
+ *   - fastfetch_main is weak: absent when libfastfetch.a is not force-loaded.
+ *     Keep in-process client names in sync with Wawona bundling (wwn-fastfetch).
  *   - Utilities that call process::exit()/abort() internally would still take
  *     the app down; such utils are kept OUT of both this table and the Cargo
  *     feature subset. Keep the two lists in sync.
@@ -29,6 +31,10 @@
  * Weak so the shim links on builds without the coreutils feature.
  */
 extern int wawona_coreutils_main(int argc, const char *const *argv)
+    __attribute__((weak));
+
+/* Provided by wwn-fastfetch (libfastfetch.a, main renamed to fastfetch_main). */
+extern int fastfetch_main(int argc, char *argv[])
     __attribute__((weak));
 
 /*
@@ -88,6 +94,8 @@ wawona_dispatch_can_handle(const char *argv0)
 		return 0;
 	if (strcmp(name, "clear") == 0)
 		return 1;
+	if (strcmp(name, "fastfetch") == 0 && fastfetch_main != NULL)
+		return 1;
 	if (wawona_coreutils_main == NULL)
 		return 0;
 	return wwn_in_safe_subset(name);
@@ -115,6 +123,15 @@ wawona_dispatch_inprocess(const char *path, char *const argv[],
 
 	if (strcmp(name, "clear") == 0)
 		return wwn_run_clear();
+
+	if (strcmp(name, "fastfetch") == 0 && fastfetch_main != NULL) {
+		while (argv[argc] != NULL)
+			argc++;
+		rc = fastfetch_main(argc, argv);
+		fflush(stdout);
+		fflush(stderr);
+		return rc;
+	}
 
 	if (!wwn_in_safe_subset(name))
 		return WWN_DISPATCH_NOT_HANDLED;

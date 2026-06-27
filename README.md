@@ -2,7 +2,7 @@
 
 Cross-compile toolchain, library substrate, and composable Nix registry shared by
 [Wawona](https://github.com/Wawona/Wawona) and every `wwn-*` patched-software repo
-(`wwn-zsh`, `wwn-weston`, `wwn-iland`, `wwn-kmscube`, `wwn-waypipe`, `wwn-coreutils`, `wwn-foot`).
+(`wwn-zsh`, `wwn-weston`, `wwn-iland`, `wwn-kmscube`, `wwn-waypipe`, `wwn-coreutils`, `wwn-foot`, `wwn-fastfetch`).
 
 It provides the Apple-platform (iOS, iPadOS, tvOS, watchOS, visionOS, macOS),
 Android/Wear OS, and Linux cross builders plus the pristine cross-compiled
@@ -23,6 +23,7 @@ let
     # merge application registry fragments on top of the base library registry:
     registry = wwn-toolchain.lib.baseRegistry
       // wwn-zsh.registryFragment
+      // wwn-fastfetch.registryFragment
       // wwn-weston.registryFragment;
     # inject cross-repo source paths recipes ask for:
     extraArgs = { ilandSrc = wwn-iland; };
