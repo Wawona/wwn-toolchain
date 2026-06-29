@@ -23,6 +23,13 @@ let
   src = pkgs.glib.src;
   libffi = buildModule.buildForIOS "libffi" { inherit simulator; };
   pcre2 = buildModule.buildForIOS "pcre2" { inherit simulator; };
+  pkgConfigPaths = "${libffi}/lib/pkgconfig:${pcre2}/lib/pkgconfig";
+  # glib falls back to proxy-libintl via meson wrapdb when no system intl exists.
+  # Prefetch the wrap tarball so configure stays offline in the Nix sandbox.
+  proxyLibintlSrc = pkgs.fetchurl {
+    url = "https://github.com/mesonbuild/wrapdb/releases/download/proxy-libintl_0.5-1/proxy-libintl-0.5.tar.gz";
+    hash = "sha256-96HL11ebqvV1xm+dmftilemwaEoosJWWfP2heFdZUwM=";
+  };
   buildFlags = [
     "-Dtests=false"
     "-Dnls=disabled"
@@ -53,17 +60,24 @@ pkgs.stdenv.mkDerivation {
       includePolyfills = true;
       needsExeWrapper = true;
     }
-    + mesonSetup.nativeFileShell;
+    + mesonSetup.nativeFileShell
+    + ''
+      # glib ships subprojects/proxy-libintl.wrap; extract the prefetched sources
+      # so meson never hits wrapdb/GitHub in the Nix sandbox.
+      mkdir -p subprojects
+      tar -xzf ${proxyLibintlSrc} -C subprojects
+    '';
 
   configurePhase = ''
     runHook preConfigure
     unset SDKROOT
-    export PKG_CONFIG_PATH="${libffi}/lib/pkgconfig:${pcre2}/lib/pkgconfig:''${PKG_CONFIG_PATH:-}"
+    export PKG_CONFIG_PATH="${pkgConfigPaths}:''${PKG_CONFIG_PATH:-}"
     meson setup build \
       --prefix=$out \
       --libdir=$out/lib \
       --native-file=native-file.txt \
       --cross-file=ios-cross-file.txt \
+      --wrap-mode=nodownload \
       --buildtype=release \
       -Ddefault_library=static \
       ${lib.concatMapStringsSep " " (flag: flag) buildFlags}
