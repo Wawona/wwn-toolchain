@@ -117,7 +117,7 @@ in
     ipados = ../../libs/pixman/ios.nix;
     visionos = ../../libs/pixman/visionos.nix;
     watchos = ../../libs/pixman/watchos.nix;
-    macos = null; # uses pkgs.pixman
+    macos = ../../libs/pixman/macos.nix;
   };
   freetype = withPlatformVariants {
     android = ../../libs/freetype/android.nix;

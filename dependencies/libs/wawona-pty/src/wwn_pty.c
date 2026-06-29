@@ -1,8 +1,8 @@
-#include "wwn_pty.h"
-
 #if defined(__ANDROID__)
 #define _POSIX_C_SOURCE 200809L
 #endif
+
+#include "wwn_pty.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -159,6 +159,39 @@ wwn_pty_is_allowed_shell_path(const char *shell_path)
 
 #if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
 	return ios_shell_path_allowed(canonical_shell);
+#elif defined(__ANDROID__)
+	if (strstr(canonical_shell, "libzsh_bin.so") != NULL)
+		return shell_is_runnable(canonical_shell);
+	{
+		const char *roots[2];
+		int i;
+
+		roots[0] = getenv("WAWONA_BUNDLE_ROOTFS");
+		roots[1] = getenv("WAWONA_ROOTFS");
+		for (i = 0; i < 2; i++) {
+			char canonical_root[PATH_MAX];
+			size_t root_len;
+
+			if (roots[i] == NULL || roots[i][0] == '\0')
+				continue;
+			if (realpath_or_copy(roots[i], canonical_root,
+			                     sizeof canonical_root) != 0)
+				continue;
+			root_len = strlen(canonical_root);
+			if (strncmp(canonical_shell, canonical_root, root_len) != 0)
+				continue;
+			if (canonical_shell[root_len] != '/')
+				continue;
+			if (strncmp(canonical_shell + root_len, "/usr/bin/", 9) != 0)
+				continue;
+			if (canonical_shell[root_len + 9] == '\0')
+				continue;
+			if (i == 1 && roots[0] != NULL && roots[0][0] != '\0')
+				continue;
+			return shell_is_runnable(canonical_shell);
+		}
+	}
+	return 0;
 #else
 	{
 		const char *roots[2];
@@ -930,6 +963,48 @@ spawn_on_slave(const char *shell_path, char *const argv[], int slave_fd,
 
 #if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
 	return ios_spawn_zsh_inprocess(shell_path, argv, slave_fd, pace_read_fd, envp);
+#elif defined(__ANDROID__)
+	if (argv == NULL || argv[0] == NULL) {
+		errno = EINVAL;
+		return -1;
+	}
+
+	if (pace_read_fd >= 0) {
+		snprintf(pace_script, sizeof pace_script,
+		         "read -r _ <&3; exec %s", shell_path);
+		spawn_argv[0] = (char *)shell_path;
+		spawn_argv[1] = (char *)"-c";
+		spawn_argv[2] = pace_script;
+		spawn_argv[3] = NULL;
+	} else {
+		for (i = 0; argv[i] != NULL && i < 6; i++)
+			spawn_argv[i] = argv[i];
+		spawn_argv[i] = NULL;
+	}
+
+	if (envp == NULL)
+		envp = environ;
+
+	pid = fork();
+	if (pid < 0)
+		return -1;
+	if (pid == 0) {
+		if (slave_fd >= 0) {
+			dup2(slave_fd, STDIN_FILENO);
+			dup2(slave_fd, STDOUT_FILENO);
+			dup2(slave_fd, STDERR_FILENO);
+			if (slave_fd > STDERR_FILENO)
+				close(slave_fd);
+		}
+		if (pace_read_fd >= 0) {
+			dup2(pace_read_fd, 3);
+			if (pace_read_fd > 3)
+				close(pace_read_fd);
+		}
+		execve(shell_path, spawn_argv, envp);
+		_exit(127);
+	}
+	return pid;
 #else
 	if (argv == NULL || argv[0] == NULL) {
 		errno = EINVAL;

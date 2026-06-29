@@ -14,7 +14,12 @@
  *     simply report WWN_DISPATCH_NOT_HANDLED, so libwwn-pty.a stays
  *     self-contained even though it is -force_load'd.
  *   - fastfetch_main is weak: absent when libfastfetch.a is not force-loaded.
- *     Keep in-process client names in sync with Wawona bundling (wwn-fastfetch).
+     *     Keep in-process client names in sync with Wawona bundling (wwn-fastfetch).
+     *   - wawona_nvim_main is weak: absent when libwawona-neovim.a is not force-loaded.
+     *     Keep in-process editor names in sync with Wawona bundling (wwn-neovim).
+     *   - waypipe_main is weak: absent when libwawona.a is built without waypipe-ssh.
+     *     SSH uses in-process libssh2 (no openssh binary); set WAYPIPE_SSH_PASSWORD
+     *     for password auth when invoking from a shell.
  *   - Utilities that call process::exit()/abort() internally would still take
  *     the app down; such utils are kept OUT of both this table and the Cargo
  *     feature subset. Keep the two lists in sync.
@@ -36,6 +41,23 @@ extern int wawona_coreutils_main(int argc, const char *const *argv)
 /* Provided by wwn-fastfetch (libfastfetch.a, main renamed to fastfetch_main). */
 extern int fastfetch_main(int argc, char *argv[])
     __attribute__((weak));
+
+/* Provided by wwn-neovim (libwawona-neovim.a, main renamed to wawona_nvim_main). */
+extern int wawona_nvim_main(int argc, char *argv[])
+    __attribute__((weak));
+
+/* Provided by libwawona.a (waypipe-ssh feature, Rust waypipe_main). */
+extern int waypipe_main(int argc, char *argv[])
+    __attribute__((weak));
+
+static int
+wwn_is_nvim_name(const char *name)
+{
+	return name != NULL
+	    && (strcmp(name, "nvim") == 0
+	        || strcmp(name, "vi") == 0
+	        || strcmp(name, "vim") == 0);
+}
 
 /*
  * In-process safe subset (v1). Mirrors the `coreutils` feature list in
@@ -96,6 +118,10 @@ wawona_dispatch_can_handle(const char *argv0)
 		return 1;
 	if (strcmp(name, "fastfetch") == 0 && fastfetch_main != NULL)
 		return 1;
+	if (strcmp(name, "waypipe") == 0 && waypipe_main != NULL)
+		return 1;
+	if (wwn_is_nvim_name(name) && wawona_nvim_main != NULL)
+		return 1;
 	if (wawona_coreutils_main == NULL)
 		return 0;
 	return wwn_in_safe_subset(name);
@@ -128,6 +154,24 @@ wawona_dispatch_inprocess(const char *path, char *const argv[],
 		while (argv[argc] != NULL)
 			argc++;
 		rc = fastfetch_main(argc, argv);
+		fflush(stdout);
+		fflush(stderr);
+		return rc;
+	}
+
+	if (strcmp(name, "waypipe") == 0 && waypipe_main != NULL) {
+		while (argv[argc] != NULL)
+			argc++;
+		rc = waypipe_main(argc, argv);
+		fflush(stdout);
+		fflush(stderr);
+		return rc;
+	}
+
+	if (wwn_is_nvim_name(name) && wawona_nvim_main != NULL) {
+		while (argv[argc] != NULL)
+			argc++;
+		rc = wawona_nvim_main(argc, argv);
 		fflush(stdout);
 		fflush(stderr);
 		return rc;
