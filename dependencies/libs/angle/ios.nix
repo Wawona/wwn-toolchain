@@ -1,6 +1,6 @@
-# ANGLE for iOS — prebuilt libs (Metal backend).
-# Prebuilt: jeremyfa universal XCFramework dylib slices (device + simulator).
-# Full GN cross-build lives in cross-base.nix (usePrebuilt=false).
+# ANGLE for iOS — static .a archives (Metal backend, App Store–safe).
+# Default: GN cross-build (libEGL.a / libGLESv2.a, link-kind=static, ILAND_ANGLE_STATIC).
+# Optional prebuilt dylibs (usePrebuilt=true) are dev-only; not for App Store builds.
 {
   lib,
   pkgs,
@@ -9,7 +9,7 @@
   buildModule ? null,
   simulator ? false,
   iosToolchain ? null,
-  usePrebuilt ? true,
+  usePrebuilt ? false,
 }:
 
 if usePrebuilt then
