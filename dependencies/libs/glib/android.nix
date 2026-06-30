@@ -44,6 +44,16 @@ pkgs.stdenv.mkDerivation {
     patchShebangs .
   '';
 
+  # The installed glib codegen tools (glib-mkenums, glib-genmarshal,
+  # gdbus-codegen) keep their `#!/usr/bin/env python3` shebang; the cross-build
+  # fixup leaves output shebangs alone. Downstream meson builds (pango,
+  # harfbuzz) resolve glib-mkenums from this package's pkg-config and exec it on
+  # the build machine, so /usr/bin/env is denied in the sandbox. Patch the
+  # installed tools to the buildPackages python3 (they are pure-python codegen).
+  postInstall = ''
+    patchShebangs --build $out/bin
+  '';
+
   nativeBuildInputs = with buildPackages; [
     meson
     ninja
