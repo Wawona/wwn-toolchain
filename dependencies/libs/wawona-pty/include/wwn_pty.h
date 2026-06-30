@@ -13,7 +13,8 @@ extern "C" {
 
 typedef struct wwn_pty_session wwn_pty_session;
 
-/* Preserved stderr fd; safe after in-process shell dup2() on fds 0–2. */
+/* Preserved stderr fd; captured before shell dup2() on fds 0–2. iOS in-process
+ * zsh wires STDERR to this fd so NSLog/os_log stays out of weston-terminal. */
 int wwn_app_log_fd(void);
 
 #if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)

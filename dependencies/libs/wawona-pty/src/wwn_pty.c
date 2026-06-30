@@ -249,9 +249,11 @@ open_pipe_fallback(int *master_fd, int *slave_fd, int pty_err)
 		return -1;
 
 	/*
-	 * Shell stdout/stderr use the socket slave; keyboard input uses a
-	 * separate pipe. Dup2'ing the same socket endpoint to both stdin and
-	 * stdout breaks zsh ZLE (typed bytes never reach the line editor).
+	 * Shell stdout uses the socket slave; keyboard input uses a separate
+	 * pipe. Dup2'ing the same socket endpoint to both stdin and stdout
+	 * breaks zsh ZLE (typed bytes never reach the line editor). Stderr is
+	 * wired to wwn_app_log_fd() in ios_zsh_thread so NSLog/os_log does not
+	 * leak into weston-terminal.
 	 */
 	if (pipe(input_pipe) != 0) {
 		close(fds[0]);
@@ -575,7 +577,6 @@ ios_broadcast_sigwinch(void)
 	pthread_mutex_unlock(&ios_shell_jobs_lock);
 }
 
-static int ios_shell_echo_fd = -1;
 static volatile sig_atomic_t ios_shell_init_done;
 static volatile sig_atomic_t ios_shell_winch_pending;
 
@@ -675,12 +676,14 @@ ios_zsh_thread(void *arg)
 		pthread_mutex_unlock(&ios_terminal_master_lock);
 
 		if (shell_out_fd >= 0) {
-			ios_shell_echo_fd = dup(shell_out_fd);
+			int app_log_fd = wwn_app_log_fd();
+
 			if (dup2(shell_out_fd, STDOUT_FILENO) < 0)
 				WWN_PTY_LOG("wwn_pty: dup2 shell stdout failed (%s)\n",
 				        strerror(errno));
-			if (dup2(shell_out_fd, STDERR_FILENO) < 0)
-				WWN_PTY_LOG("wwn_pty: dup2 shell stderr failed (%s)\n",
+			if (app_log_fd >= 0 &&
+			    dup2(app_log_fd, STDERR_FILENO) < 0)
+				WWN_PTY_LOG("wwn_pty: dup2 shell stderr(app log) failed (%s)\n",
 				        strerror(errno));
 			if (shell_out_fd > STDERR_FILENO)
 				close(shell_out_fd);
@@ -688,14 +691,12 @@ ios_zsh_thread(void *arg)
 		}
 	}
 
-	/* Diagnostics only — shell stderr must stay on the PTY/socket (see above). */
-
 	setvbuf(stdin, NULL, _IONBF, 0);
 	setvbuf(stdout, NULL, _IONBF, 0);
 	setvbuf(stderr, NULL, _IONBF, 0);
 	WWN_PTY_LOG(
-	        "wwn_pty: shell stdio wired stdin=%d stdout=%d stderr=%d echo_fd=%d\n",
-	        STDIN_FILENO, STDOUT_FILENO, STDERR_FILENO, ios_shell_echo_fd);
+	        "wwn_pty: shell stdio wired stdin=%d stdout=%d stderr=%d(app log)\n",
+	        STDIN_FILENO, STDOUT_FILENO, STDERR_FILENO);
 
 	{
 		const char *home = getenv("HOME");
@@ -729,10 +730,6 @@ ios_zsh_thread(void *arg)
 	}
 
 	ios_shell_io_active = 0;
-	if (ios_shell_echo_fd >= 0) {
-		close(ios_shell_echo_fd);
-		ios_shell_echo_fd = -1;
-	}
 	job->running = 0;
 	return NULL;
 }
@@ -1357,11 +1354,6 @@ wwn_write(int fd, const void *buf, size_t count)
 		WWN_PTY_LOG("wwn_pty: shell wrote %zd bytes to stdout first=0x%02x\n",
 		            count, first);
 	}
-
-	if (wwn_fake_tty_active() && ios_shell_io_active &&
-	    pthread_equal(pthread_self(), ios_shell_io_thread) &&
-	    fd == STDERR_FILENO && ios_shell_echo_fd >= 0)
-		fd = ios_shell_echo_fd;
 
 	return real_write(fd, buf, count);
 }
