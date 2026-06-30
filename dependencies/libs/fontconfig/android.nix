@@ -30,6 +30,14 @@ pkgs.stdenv.mkDerivation {
   name = "fontconfig-android";
   inherit src;
 
+  # The fc-case/fc-lang/fc-glyphname codegen scripts ship a `#!/usr/bin/env
+  # python3` shebang. The Android cross build runs fully sandboxed (no
+  # __noChroot), so /usr/bin/env is absent and meson's custom-command codegen
+  # fails. Rewrite the shebangs to the buildPackages python3 before configure.
+  postPatch = ''
+    patchShebangs .
+  '';
+
   nativeBuildInputs = with buildPackages; [
     meson
     ninja
