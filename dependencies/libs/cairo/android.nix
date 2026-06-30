@@ -41,6 +41,14 @@ pkgs.stdenv.mkDerivation {
   name = "cairo-android";
   inherit src;
 
+  # cairo's meson configure execs the bundled version.py via its
+  # `#!/usr/bin/env python3` shebang. The Android cross build is fully
+  # sandboxed, so on the macOS builder /usr/bin/env is outside the sandbox and
+  # exec is denied (EPERM). Rewrite shebangs to the buildPackages python3.
+  postPatch = ''
+    patchShebangs .
+  '';
+
   nativeBuildInputs = with buildPackages; [
     meson
     ninja
