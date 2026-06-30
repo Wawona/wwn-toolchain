@@ -13,7 +13,50 @@
   usePrebuilt ? true,
 }:
 
-if usePrebuilt then
+if usePrebuilt && simulator then
+  let
+    sources = import ./prebuilt-sources.nix { inherit lib pkgs; };
+    deviceHeaders = pkgs.fetchurl {
+      url = sources.iosArm64.url;
+      hash = sources.iosArm64.hash;
+    };
+  in
+  pkgs.stdenv.mkDerivation {
+    pname = "angle-ios-simulator";
+    version = sources.iosUniversal.version;
+
+    src = pkgs.fetchurl {
+      url = sources.iosUniversal.url;
+      hash = sources.iosUniversal.hash;
+    };
+
+    nativeBuildInputs = [ pkgs.unzip pkgs.gnutar ];
+    dontConfigure = true;
+    dontBuild = true;
+    unpackPhase = "true";
+    sourceRoot = ".";
+
+    installPhase = ''
+      runHook preInstall
+      mkdir -p $out/lib $out/include $out/nix-support
+      unzip -q $src -d "$TMPDIR/angle-universal"
+      root="$TMPDIR/angle-universal"
+      install -m644 "$root/${sources.iosUniversal.simEgl}" $out/lib/libEGL.dylib
+      install -m644 "$root/${sources.iosUniversal.simGles}" $out/lib/libGLESv2.dylib
+      tar -xzf ${deviceHeaders} -C "$TMPDIR"
+      cp -r "$TMPDIR/${sources.iosArm64.unpackDir}/include/"* $out/include/
+      echo dylib > $out/nix-support/link-kind
+      runHook postInstall
+    '';
+
+    meta = with lib; {
+      description = "ANGLE OpenGL ES for iOS Simulator (prebuilt dylibs from universal XCFramework)";
+      homepage = "https://angleproject.org";
+      license = licenses.bsd3;
+      platforms = platforms.darwin;
+    };
+  }
+else if usePrebuilt && !simulator then
   let
     sources = import ./prebuilt-sources.nix { inherit lib pkgs; };
     xcodeUtils = import ../../utils/xcode-wrapper.nix { inherit lib pkgs; };
@@ -26,7 +69,7 @@ if usePrebuilt then
       url = sources.iosArm64.url;
       hash = sources.iosArm64.hash;
     };
-    nativeBuildInputs = [ pkgs.gnutar ];
+    nativeBuildInputs = [ pkgs.gnutar pkgs.llvmPackages.bintools ];
     dontConfigure = true;
     dontBuild = true;
 
@@ -40,7 +83,8 @@ if usePrebuilt then
       mkdir -p $out/lib $out/include $out/nix-support
       tar -xzf $src -C "$TMPDIR"
       root="$TMPDIR/${sources.iosArm64.unpackDir}"
-      install -m644 "$root/${sources.iosArm64.eglLib}" $out/lib/libEGL.a
+      # iland ILAND_ANGLE_STATIC expects angle_egl* entry points (iland exports egl*).
+      ${pkgs.bash}/bin/bash ${./rename-angle-symbols.sh} "$root/${sources.iosArm64.eglLib}" $out/lib/libEGL.a
       install -m644 "$root/${sources.iosArm64.glesLib}" $out/lib/libGLESv2.a
       cp -r "$root/include/"* $out/include/
       echo static > $out/nix-support/link-kind
@@ -87,7 +131,7 @@ else
         [ -n "$XCODE_APP" ] && export DEVELOPER_DIR="$XCODE_APP/Contents/Developer"
       fi
       export SDKROOT="$DEVELOPER_DIR/Platforms/${sdkPlatform}.platform/Developer/SDKs/${sdkPlatform}.sdk"
-      export PATH="$DEVELOPER_DIR/Toolchains/XcodeDefault.xctoolchain/usr/bin:$PATH"
+      export PATH="/usr/bin:/usr/sbin:$DEVELOPER_DIR/Toolchains/XcodeDefault.xctoolchain/usr/bin:$PATH"
       export CC="$DEVELOPER_DIR/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang"
       export CXX="$DEVELOPER_DIR/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang++"
       export AR="$DEVELOPER_DIR/Toolchains/XcodeDefault.xctoolchain/usr/bin/ar"
@@ -115,6 +159,7 @@ else
         find "$OUT_DIR" -name '*.a' | head -20 >&2 || true
         exit 1
       fi
+      ${pkgs.bash}/bin/bash ${./rename-angle-symbols.sh} $out/lib/libEGL.a $out/lib/libEGL.a
       cp -rv ../../include/EGL ../../include/GLES2 ../../include/GLES3 ../../include/KHR $out/include/
       echo static > $out/nix-support/link-kind
     '';
