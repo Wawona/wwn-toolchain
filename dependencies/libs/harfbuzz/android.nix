@@ -36,6 +36,13 @@ pkgs.stdenv.mkDerivation {
   name = "harfbuzz-android";
   inherit src;
 
+  # Rewrite any bundled `#!/usr/bin/env python3` codegen shebangs to the
+  # buildPackages python3: the fully-sandboxed Android cross build on the macOS
+  # builder cannot exec /usr/bin/env (outside the sandbox -> EPERM).
+  postPatch = ''
+    patchShebangs .
+  '';
+
   nativeBuildInputs = with buildPackages; [
     meson
     ninja

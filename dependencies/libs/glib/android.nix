@@ -35,6 +35,15 @@ pkgs.stdenv.mkDerivation {
   name = "glib-android";
   inherit src;
 
+  # glib's meson build execs bundled codegen scripts (e.g.
+  # tools/gen-visibility-macros.py) via their `#!/usr/bin/env python3` shebang.
+  # The Android cross build is fully sandboxed, so on the macOS builder
+  # /usr/bin/env is outside the sandbox and exec is denied (EPERM). Rewrite the
+  # shebangs to the buildPackages python3 before configure.
+  postPatch = ''
+    patchShebangs .
+  '';
+
   nativeBuildInputs = with buildPackages; [
     meson
     ninja
