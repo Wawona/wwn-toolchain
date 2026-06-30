@@ -1,6 +1,7 @@
 # ANGLE for iOS — static .a archives (Metal backend, App Store–safe).
-# Default: GN cross-build (libEGL.a / libGLESv2.a, link-kind=static, ILAND_ANGLE_STATIC).
-# Optional prebuilt dylibs (usePrebuilt=true) are dev-only; not for App Store builds.
+# Prebuilt (default): XCSoar static libs force-loaded into the app binary
+# (ILAND_ANGLE_STATIC — no dlopen, no Frameworks/libEGL.dylib).
+# GN cross-build (usePrebuilt=false) is the from-source fallback.
 {
   lib,
   pkgs,
@@ -9,39 +10,25 @@
   buildModule ? null,
   simulator ? false,
   iosToolchain ? null,
-  usePrebuilt ? false,
+  usePrebuilt ? true,
 }:
 
 if usePrebuilt then
   let
     sources = import ./prebuilt-sources.nix { inherit lib pkgs; };
     xcodeUtils = import ../../utils/xcode-wrapper.nix { inherit lib pkgs; };
-    slice =
-      if simulator then
-        {
-          pname = "angle-ios-simulator";
-          egl = sources.iosUniversal.simEgl;
-          gles = sources.iosUniversal.simGles;
-        }
-      else
-        {
-          pname = "angle-ios";
-          egl = sources.iosUniversal.deviceEgl;
-          gles = sources.iosUniversal.deviceGles;
-        };
   in
   pkgs.stdenv.mkDerivation {
-    pname = slice.pname;
-    version = sources.iosUniversal.version;
+    pname = if simulator then "angle-ios-simulator" else "angle-ios";
+    version = sources.iosArm64.version;
 
     src = pkgs.fetchurl {
-      url = sources.iosUniversal.url;
-      hash = sources.iosUniversal.hash;
+      url = sources.iosArm64.url;
+      hash = sources.iosArm64.hash;
     };
-    nativeBuildInputs = [ pkgs.unzip ];
+    nativeBuildInputs = [ pkgs.gnutar ];
     dontConfigure = true;
     dontBuild = true;
-    dontUnpack = true;
 
     installPhase = ''
       runHook preInstall
@@ -50,31 +37,19 @@ if usePrebuilt then
         XCODE_APP=$(${xcodeUtils.findXcodeScript}/bin/find-xcode || true)
         [ -n "$XCODE_APP" ] && export DEVELOPER_DIR="$XCODE_APP/Contents/Developer"
       fi
-      unzip -q $src -d "$TMPDIR/angle-ios"
-      root="$TMPDIR/angle-ios"
       mkdir -p $out/lib $out/include $out/nix-support
-
-      # Do not rename dylib exports: llvm-objcopy updates the symtab but not the
-      # Mach-O export trie, so renamed angle_* entry points are invisible to ld.
-      # iland loads these at runtime via dlopen when link-kind is dylib.
-      if [ "${if simulator then "1" else "0"}" = "1" ]; then
-        lipo -thin arm64 "$root/${slice.egl}" -output $out/lib/libEGL.dylib
-        lipo -thin arm64 "$root/${slice.gles}" -output $out/lib/libGLESv2.dylib
-      else
-        cp "$root/${slice.egl}" $out/lib/libEGL.dylib
-        cp "$root/${slice.gles}" $out/lib/libGLESv2.dylib
-      fi
-      install_name_tool -id @rpath/libEGL.dylib $out/lib/libEGL.dylib
-      install_name_tool -id @rpath/libGLESv2.dylib $out/lib/libGLESv2.dylib
-
+      tar -xzf $src -C "$TMPDIR"
+      root="$TMPDIR/${sources.iosArm64.unpackDir}"
+      install -m644 "$root/${sources.iosArm64.eglLib}" $out/lib/libEGL.a
+      install -m644 "$root/${sources.iosArm64.glesLib}" $out/lib/libGLESv2.a
       cp -r "$root/include/"* $out/include/
-      echo dylib > $out/nix-support/link-kind
+      echo static > $out/nix-support/link-kind
       runHook postInstall
     '';
 
     meta = with lib; {
       description =
-        "ANGLE OpenGL ES for iOS ${if simulator then "Simulator" else ""} (prebuilt dylib, Metal)";
+        "ANGLE OpenGL ES for iOS ${if simulator then "Simulator" else ""} (prebuilt static .a, Metal, App Store–safe)";
       homepage = "https://angleproject.org";
       license = licenses.bsd3;
       platforms = platforms.darwin;
@@ -101,6 +76,7 @@ else
       "angle_enable_metal=true"
       "angle_enable_vulkan=false"
       "ios_deployment_target=\"${iosToolchain.deploymentTarget}\""
+      "ios_enable_code_signing=false"
       "use_custom_libcxx=false"
     ];
 
@@ -123,7 +99,7 @@ else
     installHook = ''
       OUT_DIR=$(find . -maxdepth 3 -type d -name 'Release*' | head -n1)
       [ -n "$OUT_DIR" ] || OUT_DIR=out
-      mkdir -p $out/lib $out/include
+      mkdir -p $out/lib $out/include $out/nix-support
       shopt -s nullglob
       for lib in "$OUT_DIR"/*.a "$OUT_DIR"/obj/lib*.a "$OUT_DIR"/lib*.a; do
         base=$(basename "$lib")
