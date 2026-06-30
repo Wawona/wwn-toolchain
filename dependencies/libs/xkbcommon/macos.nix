@@ -92,7 +92,7 @@ pkgs.stdenv.mkDerivation {
     "-Denable-x11=false"
     "-Denable-wayland=false"
     "-Dxkb-config-root=${pkgs.xkeyboard_config}/share/X11/xkb"
-    "-Dx-locale-root=${pkgs.xorg.libX11}/share/X11/locale"
+    "-Dx-locale-root=${pkgs.libx11}/share/X11/locale"
   ];
   
   meta = with lib; {
