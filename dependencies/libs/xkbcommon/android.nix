@@ -5,6 +5,7 @@
   common,
   buildModule,
   androidToolchain ? (import ../../toolchains/android.nix { inherit lib pkgs; }),
+  androidMesonSandbox ? (import ../../toolchains/android-meson-sandbox.nix { inherit lib; }),
   ...
 }:
 
@@ -21,7 +22,7 @@ let
   src = fetchSource xkbcommonSource;
   libxml2-android = buildModule.buildForAndroid "libxml2" { };
 in
-pkgs.stdenv.mkDerivation {
+pkgs.stdenv.mkDerivation (androidMesonSandbox.apply {
   name = "xkbcommon-android";
   inherit src;
 
@@ -103,4 +104,4 @@ EOF
     fi
     runHook postInstall
   '';
-}
+})

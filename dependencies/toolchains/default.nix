@@ -21,6 +21,7 @@
 let
   pkgsMacOS = pkgs;
   iosToolchain = import ../apple/default.nix { inherit lib pkgs; };
+  androidMesonSandbox = import ./android-meson-sandbox.nix { inherit lib; };
   firstNonNull = values:
     let
       filtered = builtins.filter (value: value != null) values;
@@ -96,6 +97,7 @@ let
       androidArgs = {
         inherit lib pkgs buildPackages common androidSDK androidToolchain stdenv wawonaSrc;
         inherit (pkgs) fetchurl meson ninja pkg-config;
+        inherit androidMesonSandbox;
         buildModule = androidModule;
       };
       

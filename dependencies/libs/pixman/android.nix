@@ -5,6 +5,7 @@
   common,
   buildModule,
   androidToolchain ? (import ../../toolchains/android.nix { inherit lib pkgs; }),
+  androidMesonSandbox ? (import ../../toolchains/android-meson-sandbox.nix { inherit lib; }),
   ...
 }:
 
@@ -22,7 +23,7 @@ let
   ];
   patches = [ ];
 in
-pkgs.stdenv.mkDerivation {
+pkgs.stdenv.mkDerivation (androidMesonSandbox.apply {
   name = "pixman-android";
   inherit src patches;
   nativeBuildInputs = with buildPackages; [
@@ -94,4 +95,4 @@ pkgs.stdenv.mkDerivation {
     fi
     runHook postInstall
   '';
-}
+})

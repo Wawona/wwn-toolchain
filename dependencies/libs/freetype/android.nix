@@ -10,6 +10,7 @@
   common,
   buildModule,
   androidToolchain ? (import ../../toolchains/android.nix { inherit lib pkgs; }),
+  androidMesonSandbox ? (import ../../toolchains/android-meson-sandbox.nix { inherit lib; }),
   ...
 }:
 
@@ -24,7 +25,7 @@ let
     "-Dtests=disabled"
   ];
 in
-pkgs.stdenv.mkDerivation {
+pkgs.stdenv.mkDerivation (androidMesonSandbox.apply {
   name = "freetype-android";
   inherit src;
 
@@ -82,4 +83,4 @@ pkgs.stdenv.mkDerivation {
     meson install -C build
     runHook postInstall
   '';
-}
+})

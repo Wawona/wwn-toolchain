@@ -11,6 +11,7 @@
   common,
   buildModule,
   androidToolchain ? (import ../../toolchains/android.nix { inherit lib pkgs; }),
+  androidMesonSandbox ? (import ../../toolchains/android-meson-sandbox.nix { inherit lib; }),
   ...
 }:
 
@@ -32,16 +33,9 @@ let
     "-Dintrospection=disabled"
   ];
 in
-pkgs.stdenv.mkDerivation {
+pkgs.stdenv.mkDerivation (androidMesonSandbox.apply {
   name = "harfbuzz-android";
   inherit src;
-
-  # Rewrite any bundled `#!/usr/bin/env python3` codegen shebangs to the
-  # buildPackages python3: the fully-sandboxed Android cross build on the macOS
-  # builder cannot exec /usr/bin/env (outside the sandbox -> EPERM).
-  postPatch = ''
-    patchShebangs .
-  '';
 
   nativeBuildInputs = with buildPackages; [
     meson
@@ -98,4 +92,4 @@ pkgs.stdenv.mkDerivation {
     meson install -C build
     runHook postInstall
   '';
-}
+})

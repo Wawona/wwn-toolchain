@@ -12,6 +12,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: DeterminateSystems/nix-installer-action@main
+      - name: Verify Android meson sandbox hooks
+        run: python3 ./.github/scripts/verify-android-meson-sandbox.py
       - name: lib evaluates
         run: nix eval .#lib.baseRegistry --apply builtins.attrNames
       - name: substrate instantiates (no build)

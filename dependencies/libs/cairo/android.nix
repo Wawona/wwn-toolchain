@@ -12,6 +12,7 @@
   common,
   buildModule,
   androidToolchain ? (import ../../toolchains/android.nix { inherit lib pkgs; }),
+  androidMesonSandbox ? (import ../../toolchains/android-meson-sandbox.nix { inherit lib; }),
   ...
 }:
 
@@ -37,17 +38,9 @@ let
     "-Dzlib=enabled"
   ];
 in
-pkgs.stdenv.mkDerivation {
+pkgs.stdenv.mkDerivation (androidMesonSandbox.apply {
   name = "cairo-android";
   inherit src;
-
-  # cairo's meson configure execs the bundled version.py via its
-  # `#!/usr/bin/env python3` shebang. The Android cross build is fully
-  # sandboxed, so on the macOS builder /usr/bin/env is outside the sandbox and
-  # exec is denied (EPERM). Rewrite shebangs to the buildPackages python3.
-  postPatch = ''
-    patchShebangs .
-  '';
 
   nativeBuildInputs = with buildPackages; [
     meson
@@ -104,4 +97,4 @@ pkgs.stdenv.mkDerivation {
     meson install -C build
     runHook postInstall
   '';
-}
+})

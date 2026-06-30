@@ -12,6 +12,7 @@
   common,
   buildModule,
   androidToolchain ? (import ../../toolchains/android.nix { inherit lib pkgs; }),
+  androidMesonSandbox ? (import ../../toolchains/android-meson-sandbox.nix { inherit lib; }),
   ...
 }:
 
@@ -31,28 +32,9 @@ let
     "-Dsystemtap=false"
   ];
 in
-pkgs.stdenv.mkDerivation {
+pkgs.stdenv.mkDerivation (androidMesonSandbox.apply {
   name = "glib-android";
   inherit src;
-
-  # glib's meson build execs bundled codegen scripts (e.g.
-  # tools/gen-visibility-macros.py) via their `#!/usr/bin/env python3` shebang.
-  # The Android cross build is fully sandboxed, so on the macOS builder
-  # /usr/bin/env is outside the sandbox and exec is denied (EPERM). Rewrite the
-  # shebangs to the buildPackages python3 before configure.
-  postPatch = ''
-    patchShebangs .
-  '';
-
-  # The installed glib codegen tools (glib-mkenums, glib-genmarshal,
-  # gdbus-codegen) keep their `#!/usr/bin/env python3` shebang; the cross-build
-  # fixup leaves output shebangs alone. Downstream meson builds (pango,
-  # harfbuzz) resolve glib-mkenums from this package's pkg-config and exec it on
-  # the build machine, so /usr/bin/env is denied in the sandbox. Patch the
-  # installed tools to the buildPackages python3 (they are pure-python codegen).
-  postInstall = ''
-    patchShebangs --build $out/bin
-  '';
 
   nativeBuildInputs = with buildPackages; [
     meson
@@ -125,4 +107,4 @@ pkgs.stdenv.mkDerivation {
     meson install -C build
     runHook postInstall
   '';
-}
+})

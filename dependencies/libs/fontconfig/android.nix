@@ -11,6 +11,7 @@
   common,
   buildModule,
   androidToolchain ? (import ../../toolchains/android.nix { inherit lib pkgs; }),
+  androidMesonSandbox ? (import ../../toolchains/android-meson-sandbox.nix { inherit lib; }),
   ...
 }:
 
@@ -26,17 +27,9 @@ let
     "-Dcache-build=disabled"
   ];
 in
-pkgs.stdenv.mkDerivation {
+pkgs.stdenv.mkDerivation (androidMesonSandbox.apply {
   name = "fontconfig-android";
   inherit src;
-
-  # The fc-case/fc-lang/fc-glyphname codegen scripts ship a `#!/usr/bin/env
-  # python3` shebang. The Android cross build runs fully sandboxed (no
-  # __noChroot), so /usr/bin/env is absent and meson's custom-command codegen
-  # fails. Rewrite the shebangs to the buildPackages python3 before configure.
-  postPatch = ''
-    patchShebangs .
-  '';
 
   nativeBuildInputs = with buildPackages; [
     meson
@@ -105,4 +98,4 @@ pkgs.stdenv.mkDerivation {
     meson install -C build
     runHook postInstall
   '';
-}
+})
