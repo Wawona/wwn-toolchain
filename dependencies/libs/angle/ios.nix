@@ -59,41 +59,44 @@ if usePrebuilt && simulator then
 else if usePrebuilt && !simulator then
   let
     sources = import ./prebuilt-sources.nix { inherit lib pkgs; };
-    xcodeUtils = import ../../utils/xcode-wrapper.nix { inherit lib pkgs; };
-  in
-  pkgs.stdenv.mkDerivation {
-    pname = if simulator then "angle-ios-simulator" else "angle-ios";
-    version = sources.iosArm64.version;
-
-    src = pkgs.fetchurl {
+    deviceHeaders = pkgs.fetchurl {
       url = sources.iosArm64.url;
       hash = sources.iosArm64.hash;
     };
-    nativeBuildInputs = [ pkgs.gnutar pkgs.llvmPackages.bintools ];
+  in
+  pkgs.stdenv.mkDerivation {
+    pname = "angle-ios";
+    version = sources.iosUniversal.version;
+
+    src = pkgs.fetchurl {
+      url = sources.iosUniversal.url;
+      hash = sources.iosUniversal.hash;
+    };
+
+    nativeBuildInputs = [ pkgs.unzip pkgs.gnutar ];
     dontConfigure = true;
     dontBuild = true;
+    unpackPhase = "true";
+    sourceRoot = ".";
 
     installPhase = ''
       runHook preInstall
-      unset DEVELOPER_DIR
-      if [ -z "''${XCODE_APP:-}" ]; then
-        XCODE_APP=$(${xcodeUtils.findXcodeScript}/bin/find-xcode || true)
-        [ -n "$XCODE_APP" ] && export DEVELOPER_DIR="$XCODE_APP/Contents/Developer"
-      fi
       mkdir -p $out/lib $out/include $out/nix-support
-      tar -xzf $src -C "$TMPDIR"
-      root="$TMPDIR/${sources.iosArm64.unpackDir}"
-      # iland ILAND_ANGLE_STATIC expects angle_egl* entry points (iland exports egl*).
-      ${pkgs.bash}/bin/bash ${./rename-angle-symbols.sh} "$root/${sources.iosArm64.eglLib}" $out/lib/libEGL.a
-      install -m644 "$root/${sources.iosArm64.glesLib}" $out/lib/libGLESv2.a
-      cp -r "$root/include/"* $out/include/
-      echo static > $out/nix-support/link-kind
+      unzip -q $src -d "$TMPDIR/angle-universal"
+      root="$TMPDIR/angle-universal"
+      install -m644 "$root/${sources.iosUniversal.deviceEgl}" $out/lib/libEGL.dylib
+      install -m644 "$root/${sources.iosUniversal.deviceGles}" $out/lib/libGLESv2.dylib
+      tar -xzf ${deviceHeaders} -C "$TMPDIR"
+      cp -r "$TMPDIR/${sources.iosArm64.unpackDir}/include/"* $out/include/
+      # Dylibs (not force_load .a) avoid an iOS 26 / Xcode 26 linker bug where
+      # force_load libkmscube.a + force_load libGLESv2.a fails to resolve libc++ for
+      # ANGLE when WWNIlandPresenter.o is in the link unit.
+      echo dylib > $out/nix-support/link-kind
       runHook postInstall
     '';
 
     meta = with lib; {
-      description =
-        "ANGLE OpenGL ES for iOS ${if simulator then "Simulator" else ""} (prebuilt static .a, Metal, App Store–safe)";
+      description = "ANGLE OpenGL ES for iOS device (prebuilt dylibs from universal XCFramework, Metal, App Store–safe)";
       homepage = "https://angleproject.org";
       license = licenses.bsd3;
       platforms = platforms.darwin;
