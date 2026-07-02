@@ -1339,6 +1339,7 @@ static ssize_t
 wwn_write(int fd, const void *buf, size_t count)
 {
 	ssize_t (*real_write)(int, const void *, size_t);
+	ssize_t ret;
 
 	real_write = (ssize_t (*)(int, const void *, size_t))dlsym(RTLD_NEXT, "write");
 	if (real_write == NULL) {
@@ -1346,13 +1347,40 @@ wwn_write(int fd, const void *buf, size_t count)
 		return -1;
 	}
 
-	if (wwn_fake_tty_active() && ios_shell_io_active &&
-	    pthread_equal(pthread_self(), ios_shell_io_thread) &&
-	    fd == STDOUT_FILENO && count > 0) {
-		unsigned char first = ((const unsigned char *)buf)[0];
-
-		WWN_PTY_LOG("wwn_pty: shell wrote %zd bytes to stdout first=0x%02x\n",
-		            count, first);
+	if (wwn_fake_tty_active() && (fd == STDOUT_FILENO || fd == STDERR_FILENO) && count > 0) {
+		/*
+		 * Always expand LF→CRLF for in-process shell stdout. zsh ZLE clears
+		 * ONLCR via tcsetattr; without this, weston-terminal receives bare
+		 * \\n and keeps the cursor column (stair-stepped/indented lines).
+		 */
+		int do_onlcr = (fd == STDOUT_FILENO && ios_shell_io_active);
+		if (!do_onlcr && wwn_fake_termios_init &&
+		    (wwn_fake_termios.c_oflag & OPOST) && (wwn_fake_termios.c_oflag & ONLCR))
+			do_onlcr = 1;
+		if (do_onlcr) {
+			const char *p = (const char *)buf;
+			size_t i, last = 0;
+			ssize_t total = 0;
+			for (i = 0; i < count; i++) {
+				if (p[i] == '\n') {
+					if (i > last) {
+						ret = real_write(fd, p + last, i - last);
+						if (ret < 0) return (total > 0 ? total : -1);
+						total += ret;
+					}
+					ret = real_write(fd, "\r\n", 2);
+					if (ret < 0) return (total > 0 ? total : -1);
+					total += 1; /* report original \n byte count */
+					last = i + 1;
+				}
+			}
+			if (last < count) {
+				ret = real_write(fd, p + last, count - last);
+				if (ret < 0) return (total > 0 ? total : -1);
+				total += ret;
+			}
+			return total;
+		}
 	}
 
 	return real_write(fd, buf, count);
