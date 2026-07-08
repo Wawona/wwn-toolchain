@@ -159,41 +159,10 @@ in
         inherit androidToolchain;
         buildModule = buildModule;
       }
-    else if name == "libssh2" then
-      (import ../libs/libssh2/android.nix) {
-        inherit
-          lib
-          pkgs
-          buildPackages
-          common
-          ;
-        inherit androidToolchain;
-        buildModule = buildModule;
-      }
+    # SSH stack (openssh/libssh2/sshpass) moved to the wwn-ssh repo; resolved
+    # via the merged registry, never via this fallback.
     else if name == "mbedtls" then
       (import ../libs/mbedtls/android.nix) {
-        inherit
-          lib
-          pkgs
-          buildPackages
-          common
-          ;
-        inherit androidToolchain;
-        buildModule = buildModule;
-      }
-    else if name == "openssh" then
-      (import ../libs/openssh/android.nix) {
-        inherit
-          lib
-          pkgs
-          buildPackages
-          common
-          ;
-        inherit androidToolchain;
-        buildModule = buildModule;
-      }
-    else if name == "sshpass" then
-      (import ../libs/sshpass/android.nix) {
         inherit
           lib
           pkgs

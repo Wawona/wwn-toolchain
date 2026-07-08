@@ -45,11 +45,10 @@ in
       pkgs.callPackage ../libs/libclc/ios.nix { inherit buildPackages common buildModule simulator iosToolchain; }
     else if name == "xkbcommon" then
       pkgs.callPackage ../libs/xkbcommon/ios.nix { inherit buildPackages common buildModule simulator iosToolchain; }
-    # Note: libssh2 removed - using OpenSSH binary instead
+    # Note: SSH stack (openssh/libssh2/sshpass) moved to the wwn-ssh repo;
+    # resolved via the merged registry, never via this fallback.
     else if name == "mbedtls" then
       pkgs.callPackage ../libs/mbedtls/ios.nix { inherit buildPackages common buildModule simulator iosToolchain; }
-    else if name == "sshpass" then
-      pkgs.callPackage ../libs/sshpass/ios.nix { inherit buildPackages common buildModule simulator iosToolchain; }
     else
       let
         src =

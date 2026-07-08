@@ -33,16 +33,12 @@
       pkgs.callPackage ../libs/spirv-tools/watchos.nix { inherit buildPackages common buildModule simulator iosToolchain; }
     else if name == "xkbcommon" then
       pkgs.callPackage ../libs/xkbcommon/watchos.nix { inherit buildPackages common buildModule simulator iosToolchain; }
-    else if name == "libssh2" then
-      pkgs.callPackage ../libs/libssh2/watchos.nix { inherit buildPackages common buildModule simulator iosToolchain; }
     else if name == "mbedtls" then
       pkgs.callPackage ../libs/mbedtls/watchos.nix { inherit buildPackages common buildModule simulator iosToolchain; }
     else if name == "openssl" then
       pkgs.callPackage ../libs/openssl/watchos.nix { inherit buildPackages common buildModule simulator iosToolchain; }
-    else if name == "openssh" then
-      pkgs.callPackage ../libs/openssh/watchos.nix { inherit buildPackages common buildModule simulator iosToolchain; }
-    else if name == "sshpass" then
-      pkgs.callPackage ../libs/sshpass/watchos.nix { inherit buildPackages common buildModule simulator iosToolchain; }
+    # SSH stack (openssh/libssh2/sshpass) moved to the wwn-ssh repo; resolved
+    # via the merged registry, never via this fallback.
     else if name == "epoll-shim" then
       pkgs.callPackage ../libs/epoll-shim/watchos.nix { inherit buildPackages common buildModule simulator iosToolchain; }
     else if name == "pixman" then

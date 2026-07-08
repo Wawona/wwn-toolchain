@@ -220,16 +220,8 @@ in
     watchos = ../../libs/openssl/watchos.nix;
     macos = null; # uses pkgs.openssl
   };
-  libssh2 = withPlatformVariants {
-    android = ../../libs/libssh2/android.nix;
-    wearos = ../../libs/libssh2/wearos.nix;
-    ios = ../../libs/libssh2/ios.nix;
-    tvos = ../../libs/libssh2/tvos.nix;
-    ipados = ../../libs/libssh2/ios.nix;
-    visionos = ../../libs/libssh2/visionos.nix;
-    watchos = ../../libs/libssh2/watchos.nix;
-    macos = null;
-  };
+  # SSH stack (openssh, libssh2, sshpass) moved to the wwn-ssh repo; consumers
+  # merge wwn-ssh.registryFragment on top of this base registry.
   mbedtls = withPlatformVariants {
     android = ../../libs/mbedtls/android.nix;
     wearos = ../../libs/mbedtls/wearos.nix;
@@ -239,26 +231,6 @@ in
     visionos = ../../libs/mbedtls/visionos.nix;
     watchos = ../../libs/mbedtls/watchos.nix;
     macos = null;
-  };
-  openssh = withPlatformVariants {
-    android = ../../libs/openssh/android.nix;
-    wearos = ../../libs/openssh/wearos.nix;
-    ios = ../../libs/openssh/ios.nix;
-    tvos = ../../libs/openssh/tvos.nix;
-    ipados = ../../libs/openssh/ios.nix;
-    visionos = ../../libs/openssh/visionos.nix;
-    watchos = ../../libs/openssh/watchos.nix;
-    macos = null;
-  };
-  sshpass = withPlatformVariants {
-    android = ../../libs/sshpass/android.nix;
-    wearos = ../../libs/sshpass/wearos.nix;
-    ios = ../../libs/sshpass/ios.nix;
-    tvos = ../../libs/sshpass/tvos.nix;
-    ipados = ../../libs/sshpass/ios.nix;
-    visionos = ../../libs/sshpass/visionos.nix;
-    watchos = ../../libs/sshpass/watchos.nix;
-    macos = ../../libs/sshpass/macos.nix;
   };
   epoll-shim = withPlatformVariants {
     android = null; # bionic has epoll

@@ -33,16 +33,12 @@
       pkgs.callPackage ../libs/spirv-tools/ipados.nix { inherit buildPackages common buildModule simulator iosToolchain; }
     else if name == "xkbcommon" then
       pkgs.callPackage ../libs/xkbcommon/ipados.nix { inherit buildPackages common buildModule simulator iosToolchain; }
-    else if name == "libssh2" then
-      pkgs.callPackage ../libs/libssh2/ipados.nix { inherit buildPackages common buildModule simulator iosToolchain; }
     else if name == "mbedtls" then
       pkgs.callPackage ../libs/mbedtls/ipados.nix { inherit buildPackages common buildModule simulator iosToolchain; }
     else if name == "openssl" then
       pkgs.callPackage ../libs/openssl/ipados.nix { inherit buildPackages common buildModule simulator iosToolchain; }
-    else if name == "openssh" then
-      pkgs.callPackage ../libs/openssh/ipados.nix { inherit buildPackages common buildModule simulator iosToolchain; }
-    else if name == "sshpass" then
-      pkgs.callPackage ../libs/sshpass/ipados.nix { inherit buildPackages common buildModule simulator iosToolchain; }
+    # SSH stack (openssh/libssh2/sshpass) moved to the wwn-ssh repo; resolved
+    # via the merged registry, never via this fallback.
     else if name == "epoll-shim" then
       pkgs.callPackage ../libs/epoll-shim/ipados.nix { inherit buildPackages common buildModule simulator iosToolchain; }
     else if name == "pixman" then
