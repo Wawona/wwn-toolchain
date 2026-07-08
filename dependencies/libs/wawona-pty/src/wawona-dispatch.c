@@ -17,9 +17,12 @@
      *     Keep in-process client names in sync with Wawona bundling (wwn-fastfetch).
      *   - wawona_nvim_main is weak: absent when libwawona-neovim.a is not force-loaded.
      *     Keep in-process editor names in sync with Wawona bundling (wwn-neovim).
-     *   - waypipe_main is weak: absent when libwawona.a is built without waypipe-ssh.
-     *     SSH uses in-process libssh2 (no openssh binary); set WAYPIPE_SSH_PASSWORD
-     *     for password auth when invoking from a shell.
+ *   - waypipe_main is weak: absent when libwawona.a is built without waypipe-ssh.
+ *     Uses in-process libssh2 for Wayland forwarding over SSH.
+ *   - ssh_main / ssh_keygen_main / scp_main are weak: absent when
+ *     libssh-inprocess.a (openssh built for iOS) is not force-loaded.
+ *     ssh_main provides a full OpenSSH client (set SSH_ASKPASS_PASSWORD for
+ *     password auth); ssh_keygen_main generates keys; scp_main copies files.
  *   - Utilities that call process::exit()/abort() internally would still take
  *     the app down; such utils are kept OUT of both this table and the Cargo
  *     feature subset. Keep the two lists in sync.
@@ -50,6 +53,78 @@ extern int wawona_nvim_main(int argc, char *argv[])
 extern int waypipe_main(int argc, char *argv[])
     __attribute__((weak));
 
+/*
+ * Provided by libssh-inprocess.a (openssh built for iOS, no fork/exec).
+ * ssh_main: full OpenSSH client (connects via tcp, password via
+ *   SSH_ASKPASS_PASSWORD env var).
+ * ssh_keygen_main: key-generation tool (no network).
+ * scp_main: secure copy client.
+ * These are absent when the openssh static library is not linked, so
+ * keep them weak.
+ */
+extern int ssh_main(int argc, char *argv[])
+    __attribute__((weak));
+extern int ssh_keygen_main(int argc, char *argv[])
+    __attribute__((weak));
+extern int scp_main(int argc, char *argv[])
+    __attribute__((weak));
+
+/*
+ * Bundled Wayland demo clients from libweston-13.a.
+ * These connect to the host compositor via WAYLAND_DISPLAY and open a window,
+ * running in-process on the calling thread (foreground) until the window
+ * closes.  All are weak so the dispatch shim links on builds where the weston
+ * toytoolkit archive is absent (e.g. watchOS).
+ */
+extern int weston_simple_shm_main(int argc, char *argv[])
+    __attribute__((weak));
+extern int flower_main(int argc, char *argv[])
+    __attribute__((weak));
+extern int clickdot_main(int argc, char *argv[])
+    __attribute__((weak));
+extern int smoke_main(int argc, char *argv[])
+    __attribute__((weak));
+extern int eventdemo_main(int argc, char *argv[])
+    __attribute__((weak));
+extern int resizor_main(int argc, char *argv[])
+    __attribute__((weak));
+extern int cliptest_main(int argc, char *argv[])
+    __attribute__((weak));
+extern int transformed_main(int argc, char *argv[])
+    __attribute__((weak));
+extern int stacking_main(int argc, char *argv[])
+    __attribute__((weak));
+extern int dnd_main(int argc, char *argv[])
+    __attribute__((weak));
+extern int image_main(int argc, char *argv[])
+    __attribute__((weak));
+extern int scaler_main(int argc, char *argv[])
+    __attribute__((weak));
+extern int editor_main(int argc, char *argv[])
+    __attribute__((weak));
+extern int constraints_main(int argc, char *argv[])
+    __attribute__((weak));
+
+static void
+wwn_dispatch_sync_terminal_size_env(void)
+{
+#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
+	struct winsize ws;
+	char buf[16];
+
+	if (wwn_pty_tty_shim_get_winsize(&ws) != 0)
+		return;
+	if (ws.ws_col > 0) {
+		snprintf(buf, sizeof buf, "%u", (unsigned)ws.ws_col);
+		setenv("COLUMNS", buf, 1);
+	}
+	if (ws.ws_row > 0) {
+		snprintf(buf, sizeof buf, "%u", (unsigned)ws.ws_row);
+		setenv("LINES", buf, 1);
+	}
+#endif
+}
+
 static int
 wwn_is_nvim_name(const char *name)
 {
@@ -57,6 +132,84 @@ wwn_is_nvim_name(const char *name)
 	    && (strcmp(name, "nvim") == 0
 	        || strcmp(name, "vi") == 0
 	        || strcmp(name, "vim") == 0);
+}
+
+static int
+wwn_is_waypipe_name(const char *name)
+{
+	return name != NULL
+	    && (strcmp(name, "waypipe") == 0
+	        || strcmp(name, "waypipe-rs") == 0);
+}
+
+static int
+wwn_is_ssh_name(const char *name)
+{
+	return name != NULL && strcmp(name, "ssh") == 0;
+}
+
+static int
+wwn_is_ssh_keygen_name(const char *name)
+{
+	return name != NULL
+	    && (strcmp(name, "ssh-keygen") == 0
+	        || strcmp(name, "ssh_keygen") == 0);
+}
+
+static int
+wwn_is_scp_name(const char *name)
+{
+	return name != NULL && strcmp(name, "scp") == 0;
+}
+
+/*
+ * Table of bundled Wayland clients dispatchable from wwn-zsh.
+ * Each entry maps a command name to a weak function pointer.  NULL fn means
+ * the archive was not linked (e.g. watchOS build without weston toytoolkit).
+ */
+typedef int (*wwn_client_fn)(int, char *[]);
+
+typedef struct {
+	const char    *name;
+	wwn_client_fn  fn;
+} wwn_wayland_entry_t;
+
+/*
+ * Static initializer with weak symbols: the compiler stores NULL for any
+ * absent weak symbol, so wwn_wayland_clients[i].fn is NULL when not linked.
+ */
+static const wwn_wayland_entry_t wwn_wayland_clients[] = {
+	{ "weston-simple-shm", (wwn_client_fn)weston_simple_shm_main },
+	{ "weston-flower",     (wwn_client_fn)flower_main     },
+	{ "weston-clickdot",   (wwn_client_fn)clickdot_main   },
+	{ "weston-smoke",      (wwn_client_fn)smoke_main      },
+	{ "weston-eventdemo",  (wwn_client_fn)eventdemo_main  },
+	{ "weston-resizor",    (wwn_client_fn)resizor_main    },
+	{ "weston-cliptest",   (wwn_client_fn)cliptest_main   },
+	{ "weston-transformed",(wwn_client_fn)transformed_main},
+	{ "weston-stacking",   (wwn_client_fn)stacking_main   },
+	{ "weston-dnd",        (wwn_client_fn)dnd_main        },
+	{ "weston-image",      (wwn_client_fn)image_main      },
+	{ "weston-scaler",     (wwn_client_fn)scaler_main     },
+	{ "weston-editor",     (wwn_client_fn)editor_main     },
+	{ "weston-constraints",(wwn_client_fn)constraints_main},
+};
+
+#define WWN_WAYLAND_CLIENTS_N \
+	(sizeof(wwn_wayland_clients) / sizeof(wwn_wayland_clients[0]))
+
+static wwn_client_fn
+wwn_lookup_wayland_client(const char *name)
+{
+	size_t i;
+
+	if (name == NULL)
+		return NULL;
+	for (i = 0; i < WWN_WAYLAND_CLIENTS_N; i++) {
+		if (strcmp(name, wwn_wayland_clients[i].name) == 0)
+			return wwn_wayland_clients[i].fn;
+	}
+	return NULL;
 }
 
 /*
@@ -118,9 +271,17 @@ wawona_dispatch_can_handle(const char *argv0)
 		return 1;
 	if (strcmp(name, "fastfetch") == 0 && fastfetch_main != NULL)
 		return 1;
-	if (strcmp(name, "waypipe") == 0 && waypipe_main != NULL)
+	if (wwn_is_waypipe_name(name) && waypipe_main != NULL)
 		return 1;
 	if (wwn_is_nvim_name(name) && wawona_nvim_main != NULL)
+		return 1;
+	if (wwn_is_ssh_name(name) && ssh_main != NULL)
+		return 1;
+	if (wwn_is_ssh_keygen_name(name) && ssh_keygen_main != NULL)
+		return 1;
+	if (wwn_is_scp_name(name) && scp_main != NULL)
+		return 1;
+	if (wwn_lookup_wayland_client(name) != NULL)
 		return 1;
 	if (wawona_coreutils_main == NULL)
 		return 0;
@@ -159,7 +320,7 @@ wawona_dispatch_inprocess(const char *path, char *const argv[],
 		return rc;
 	}
 
-	if (strcmp(name, "waypipe") == 0 && waypipe_main != NULL) {
+	if (wwn_is_waypipe_name(name) && waypipe_main != NULL) {
 		while (argv[argc] != NULL)
 			argc++;
 		rc = waypipe_main(argc, argv);
@@ -177,6 +338,46 @@ wawona_dispatch_inprocess(const char *path, char *const argv[],
 		return rc;
 	}
 
+	if (wwn_is_ssh_name(name) && ssh_main != NULL) {
+		while (argv[argc] != NULL)
+			argc++;
+		rc = ssh_main(argc, argv);
+		fflush(stdout);
+		fflush(stderr);
+		return rc;
+	}
+
+	if (wwn_is_ssh_keygen_name(name) && ssh_keygen_main != NULL) {
+		while (argv[argc] != NULL)
+			argc++;
+		rc = ssh_keygen_main(argc, argv);
+		fflush(stdout);
+		fflush(stderr);
+		return rc;
+	}
+
+	if (wwn_is_scp_name(name) && scp_main != NULL) {
+		while (argv[argc] != NULL)
+			argc++;
+		rc = scp_main(argc, argv);
+		fflush(stdout);
+		fflush(stderr);
+		return rc;
+	}
+
+	{
+		wwn_client_fn wfn = wwn_lookup_wayland_client(name);
+
+		if (wfn != NULL) {
+			while (argv[argc] != NULL)
+				argc++;
+			rc = wfn(argc, argv);
+			fflush(stdout);
+			fflush(stderr);
+			return rc;
+		}
+	}
+
 	if (!wwn_in_safe_subset(name))
 		return WWN_DISPATCH_NOT_HANDLED;
 
@@ -188,6 +389,7 @@ wawona_dispatch_inprocess(const char *path, char *const argv[],
 		argc++;
 
 	/* The utility writes to the inherited stdout/stderr (the PTY slave). */
+	wwn_dispatch_sync_terminal_size_env();
 	rc = wawona_coreutils_main(argc, (const char *const *)argv);
 
 	/* Flush so output orders correctly relative to the next zsh prompt. */

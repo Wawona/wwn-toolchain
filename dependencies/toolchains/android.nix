@@ -143,12 +143,62 @@ let
       "$@"
   '';
 
-  androidGnuAR = pkgs.writeShellScript "android-gnu-ar" ''
-    exec "${if useSourceFallback then fallbackAR else prebuiltAR}" --format=gnu "$@"
+  # NDK r29's prebuilt Mach-O tools ship as universal (x86_64+arm64) binaries
+  # whose arm64 slice carries a hardened-runtime signature that AMFI rejects
+  # inside the Nix build sandbox on Apple Silicon — the tool is SIGKILLed
+  # ("Killed: 9", exit 137) the moment the build user execs it, even though the
+  # exact same binary runs fine interactively. Observed on llvm-ar; the same
+  # class can hit any downloaded NDK tool. Durable fix: ad-hoc re-sign a private
+  # copy once per build into TMPDIR and exec that. This replaces the old manual
+  # "binary warming" hack. Reusable across tools via `amfiResign`.
+  #
+  # `amfiResign slot binary extraArgs`: emits a shell snippet that sets `_bin`
+  # to an AMFI-safe path (re-signed copy on Darwin, original elsewhere) and
+  # execs it. `slot` must be unique per tool so their TMPDIR copies don't clash.
+  #
+  # NB1: the copy must keep the tool's own basename (llvm-ar etc.): llvm-ar
+  # dispatches ar/ranlib/lib/dlltool from argv[0]'s *stem*, and a leading-dot
+  # name like ".android-llvm-ar-resigned" has an empty stem (everything after
+  # the first '.' is treated as the extension), which makes it bail with
+  # "not ranlib, ar, lib or dlltool". So: hidden per-slot dir, real basename.
+  #
+  # NB2: this wrapper runs massively in parallel (the stdenv strip hook uses
+  # xargs -P), so the resign must be race-safe: copy+sign into a unique temp
+  # file and rename(2) it into place. Exec'ing a partially-copied binary gets
+  # SIGKILLed, and a child killed by signal makes xargs exit 125, which the
+  # strip hook treats as fatal (unlike plain per-file strip errors, code 123).
+  amfiResign = slot: binary: extraArgs: ''
+    _bin="${binary}"
+    if [ "$(uname)" = "Darwin" ] && [ -n "''${TMPDIR:-}" ] && [ -x /usr/bin/codesign ]; then
+      _dir="$TMPDIR/.android-resign-${slot}"
+      _fixed="$_dir/${slot}"
+      if [ ! -x "$_fixed" ]; then
+        mkdir -p "$_dir" 2>/dev/null || true
+        _tmp="$_dir/.tmp.$$"
+        if cp "$_bin" "$_tmp" 2>/dev/null && chmod u+wx "$_tmp" 2>/dev/null \
+          && /usr/bin/codesign --remove-signature "$_tmp" 2>/dev/null \
+          && /usr/bin/codesign -f -s - "$_tmp" 2>/dev/null \
+          && mv -f "$_tmp" "$_fixed" 2>/dev/null; then
+          :
+        else
+          rm -f "$_tmp" 2>/dev/null || true
+        fi
+      fi
+      if [ -x "$_fixed" ]; then
+        _bin="$_fixed"
+      fi
+    fi
+    exec "$_bin" ${extraArgs} "$@"
   '';
-  androidGnuRANLIB = pkgs.writeShellScript "android-gnu-ranlib" ''
-    exec "${if useSourceFallback then fallbackRANLIB else prebuiltRANLIB}" "$@"
-  '';
+  androidGnuAR = pkgs.writeShellScript "android-gnu-ar" (
+    amfiResign "llvm-ar" (if useSourceFallback then fallbackAR else prebuiltAR) "--format=gnu"
+  );
+  androidGnuRANLIB = pkgs.writeShellScript "android-gnu-ranlib" (
+    amfiResign "llvm-ranlib" (if useSourceFallback then fallbackRANLIB else prebuiltRANLIB) ""
+  );
+  androidGnuSTRIP = pkgs.writeShellScript "android-gnu-strip" (
+    amfiResign "llvm-strip" (if useSourceFallback then fallbackSTRIP else prebuiltSTRIP) ""
+  );
 
 in
 rec {
@@ -166,7 +216,7 @@ rec {
   androidCC = if useSourceFallback then adaptiveCC else prebuiltCC;
   androidCXX = if useSourceFallback then adaptiveCXX else prebuiltCXX;
   androidAR = androidGnuAR;
-  androidSTRIP = if useSourceFallback then fallbackSTRIP else prebuiltSTRIP;
+  androidSTRIP = androidGnuSTRIP;
   androidRANLIB = androidGnuRANLIB;
   androidndkRoot = ndkRoot;
   # Unified sysroot + per-API lib dir (crtbegin_*.o, libc) — required when clang triple has no API suffix.

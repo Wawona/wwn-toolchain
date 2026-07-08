@@ -182,6 +182,15 @@ in
     watchos = ../../libs/cairo/ios.nix;
     macos = null; # uses pkgs.cairo
   };
+  cairo-gobject = withPlatformVariants {
+    android = ../../libs/cairo-gobject/android.nix;
+    ios = ../../libs/cairo-gobject/ios.nix;
+    ipados = ../../libs/cairo-gobject/ios.nix;
+    tvos = ../../libs/cairo-gobject/ios.nix;
+    visionos = ../../libs/cairo-gobject/ios.nix;
+    watchos = ../../libs/cairo-gobject/ios.nix;
+    macos = null; # uses pkgs.cairo (gobject support built in)
+  };
   pango = withPlatformVariants {
     android = ../../libs/pango/android.nix;
     ios = ../../libs/pango/ios.nix;

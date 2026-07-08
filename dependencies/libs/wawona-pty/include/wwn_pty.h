@@ -4,6 +4,7 @@
 #include <sys/types.h>
 #include <stddef.h>
 #include <termios.h>
+#include <sys/ioctl.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -19,6 +20,7 @@ int wwn_app_log_fd(void);
 
 #if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
 void wwn_pty_tty_shim_set_winsize(const struct winsize *ws);
+int wwn_pty_tty_shim_get_winsize(struct winsize *ws);
 void wwn_pty_ios_signal_shells(void);
 void wwn_pty_ios_kick_shell_display(void);
 void wwn_pty_ios_shell_init_done(void);

@@ -1253,6 +1253,17 @@ wwn_pty_tty_shim_set_winsize(const struct winsize *ws)
 		wwn_fake_winsize = *ws;
 }
 
+int
+wwn_pty_tty_shim_get_winsize(struct winsize *ws)
+{
+	if (ws == NULL) {
+		errno = EINVAL;
+		return -1;
+	}
+	*ws = wwn_fake_winsize;
+	return 0;
+}
+
 static int
 wwn_fake_tty_active(void)
 {
