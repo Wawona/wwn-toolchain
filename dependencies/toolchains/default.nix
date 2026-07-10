@@ -38,9 +38,22 @@ let
       iosSiblingPath = (builtins.dirOf path) + "/ios.nix";
       hasIosSibling = builtins.pathExists iosSiblingPath;
       iosSiblingFnArgs = if hasIosSibling then builtins.functionArgs (import iosSiblingPath) else { };
+      # *-android-drm.nix wrappers are unary lambdas that forward to *-android.nix.
+      androidBaseName = builtins.baseNameOf path;
+      androidBaseSiblingPath =
+        if lib.hasSuffix "-drm.nix" androidBaseName then
+          (builtins.dirOf path) + "/${lib.removeSuffix "-drm.nix" androidBaseName}.nix"
+        else
+          null;
+      hasAndroidBaseSibling =
+        androidBaseSiblingPath != null && builtins.pathExists androidBaseSiblingPath;
+      androidBaseSiblingFnArgs =
+        if hasAndroidBaseSibling then builtins.functionArgs (import androidBaseSiblingPath) else { };
     in
     if fnArgs == { } then
-      if hasIosSibling && iosSiblingFnArgs != { } then
+      if hasAndroidBaseSibling && androidBaseSiblingFnArgs != { } then
+        fn (builtins.intersectAttrs androidBaseSiblingFnArgs overrides)
+      else if hasIosSibling && iosSiblingFnArgs != { } then
         pkgs.callPackage path (builtins.intersectAttrs iosSiblingFnArgs overrides)
       else
         pkgs.callPackage path overrides
