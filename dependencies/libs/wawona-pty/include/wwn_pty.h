@@ -54,6 +54,14 @@ int wawona_dispatch_inprocess(const char *path, char *const argv[],
  * committing to a fork it must avoid on the sandbox.
  */
 int wawona_dispatch_can_handle(const char *argv0);
+/*
+ * Start a bundled helper on a background pthread (compositor spawn path).
+ * Returns 0 if started, WWN_DISPATCH_NOT_HANDLED if unknown, -2 on thread alloc
+ * failure (errno set).  Does not block the caller — required so fuzzel's
+ * Wayland loop does not freeze niri on Apple mobile.
+ */
+int wawona_dispatch_spawn_async(const char *path, char *const argv[],
+                                char *const envp[]);
 #endif
 
 int wwn_pty_open(int *master_fd, int *slave_fd, const struct winsize *ws);

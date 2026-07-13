@@ -89,15 +89,43 @@ wwn_mobile_spawn_job_find(pid_t fake_pid)
 	return NULL;
 }
 
+static void
+wwn_mobile_spawn_job_cleanup(struct wwn_mobile_spawn_job *job)
+{
+	int i;
+
+	for (i = 0; i < WWN_MOBILE_SPAWN_MAX_ARGV && job->argv_storage[i] != NULL;
+	     i++) {
+		free(job->argv_storage[i]);
+		job->argv_storage[i] = NULL;
+		job->argv[i] = NULL;
+	}
+	job->fake_pid = 0;
+	job->running = 0;
+}
+
+static int
+wwn_mobile_spawn_copy_argv(struct wwn_mobile_spawn_job *job,
+                           char *const argv[])
+{
+	int i;
+
+	for (i = 0; argv != NULL && argv[i] != NULL &&
+	            i < WWN_MOBILE_SPAWN_MAX_ARGV - 1;
+	     i++) {
+		job->argv_storage[i] = strdup(argv[i]);
+		if (job->argv_storage[i] == NULL)
+			return -1;
+		job->argv[i] = job->argv_storage[i];
+	}
+	job->argv[i] = NULL;
+	return 0;
+}
+
 static void *
 wwn_mobile_spawn_thread(void *arg)
 {
 	struct wwn_mobile_spawn_job *job = arg;
-	int argc = 0;
-
-	while (job->argv[argc] != NULL &&
-	       argc < WWN_MOBILE_SPAWN_MAX_ARGV - 1)
-		argc++;
 
 	job->exit_code = wawona_dispatch_inprocess(
 	    job->argv[0], job->argv, NULL);
@@ -105,7 +133,9 @@ wwn_mobile_spawn_thread(void *arg)
 		job->exit_code = 127;
 	fflush(stdout);
 	fflush(stderr);
-	job->running = 0;
+	pthread_mutex_lock(&mobile_spawn_lock);
+	wwn_mobile_spawn_job_cleanup(job);
+	pthread_mutex_unlock(&mobile_spawn_lock);
 	return NULL;
 }
 
@@ -142,13 +172,9 @@ wwn_mobile_spawn_try_inprocess(pid_t *pid, const char *path,
 	if (pthread_create(&job->thread, NULL, wwn_mobile_spawn_thread,
 	                   job) != 0) {
 fail:
-		for (i = 0; job->argv_storage[i] != NULL; i++) {
-			free(job->argv_storage[i]);
-			job->argv_storage[i] = NULL;
-			job->argv[i] = NULL;
-		}
-		job->fake_pid = 0;
-		job->running = 0;
+		pthread_mutex_lock(&mobile_spawn_lock);
+		wwn_mobile_spawn_job_cleanup(job);
+		pthread_mutex_unlock(&mobile_spawn_lock);
 		errno = EAGAIN;
 		return -1;
 	}
@@ -158,6 +184,54 @@ fail:
 	        "wawona-mobile-spawn: started in-process '%s' fake_pid=%d\n",
 	        probe, (int)job->fake_pid);
 	return 1;
+}
+
+/*
+ * Start a bundled helper on a background pthread without blocking the caller.
+ * Used by niri spawn_sync on Apple mobile so fuzzel's Wayland loop does not
+ * freeze the compositor thread.  The job slot is reclaimed when the thread exits.
+ */
+int
+wawona_dispatch_spawn_async(const char *path, char *const argv[],
+                            char *const envp[])
+{
+	struct wwn_mobile_spawn_job *job;
+	const char *probe;
+	int i;
+
+	probe = (argv != NULL && argv[0] != NULL) ? argv[0] : path;
+	if (probe == NULL || !wawona_dispatch_can_handle(probe))
+		return WWN_DISPATCH_NOT_HANDLED;
+
+	job = wwn_mobile_spawn_job_alloc();
+	if (job == NULL) {
+		errno = EAGAIN;
+		return -2;
+	}
+
+	if (wwn_mobile_spawn_copy_argv(job, argv) != 0) {
+		pthread_mutex_lock(&mobile_spawn_lock);
+		wwn_mobile_spawn_job_cleanup(job);
+		pthread_mutex_unlock(&mobile_spawn_lock);
+		errno = ENOMEM;
+		return -2;
+	}
+
+	wwn_mobile_apply_envp(envp);
+
+	if (pthread_create(&job->thread, NULL, wwn_mobile_spawn_thread,
+	                   job) != 0) {
+		pthread_mutex_lock(&mobile_spawn_lock);
+		wwn_mobile_spawn_job_cleanup(job);
+		pthread_mutex_unlock(&mobile_spawn_lock);
+		errno = EAGAIN;
+		return -2;
+	}
+
+	(void)pthread_detach(job->thread);
+	fprintf(stderr,
+	        "wawona-mobile-spawn: started async '%s'\n", probe);
+	return 0;
 }
 
 static int (*real_posix_spawn)(pid_t *restrict, const char *restrict,
@@ -243,7 +317,6 @@ wwn_waitpid(pid_t pid, int *status, int options)
 {
 	struct wwn_mobile_spawn_job *job;
 	void *rv;
-	int i;
 
 	wwn_mobile_spawn_resolve_real();
 	job = wwn_mobile_spawn_job_find(pid);
@@ -255,13 +328,9 @@ wwn_waitpid(pid_t pid, int *status, int options)
 		}
 		if (status != NULL)
 			*status = job->exit_code << 8;
-		for (i = 0; job->argv_storage[i] != NULL; i++) {
-			free(job->argv_storage[i]);
-			job->argv_storage[i] = NULL;
-			job->argv[i] = NULL;
-		}
-		job->fake_pid = 0;
-		job->running = 0;
+		pthread_mutex_lock(&mobile_spawn_lock);
+		wwn_mobile_spawn_job_cleanup(job);
+		pthread_mutex_unlock(&mobile_spawn_lock);
 		return pid;
 	}
 	if (real_waitpid == NULL) {
