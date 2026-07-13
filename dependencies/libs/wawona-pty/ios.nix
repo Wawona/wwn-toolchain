@@ -35,7 +35,10 @@ pkgs.stdenv.mkDerivation {
     $CC -c src/wawona-dispatch.c -Iinclude \
       -arch arm64 -isysroot "$SDKROOT" ${mobile.minVerFlag} \
       -fPIC -O2 -o wawona-dispatch.o
-    $AR rcs libwwn-pty.a wwn_pty.o wawona-dispatch.o
+    $CC -c src/wawona-mobile-spawn.c -Iinclude \
+      -arch arm64 -isysroot "$SDKROOT" ${mobile.minVerFlag} \
+      -fPIC -O2 -o wawona-mobile-spawn.o
+    $AR rcs libwwn-pty.a wwn_pty.o wawona-dispatch.o wawona-mobile-spawn.o
     # Note: consumers must link -ldl -lpthread when using wwn_pty on iOS.
     runHook postBuild
   '';

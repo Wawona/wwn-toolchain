@@ -52,6 +52,13 @@ let
   waylandScanner = buildPackages.stdenv.mkDerivation {
     name = "wayland-scanner-host";
     inherit src;
+    postPatch = ''
+      substituteInPlace meson.build \
+        --replace "error('SFD_CLOEXEC is needed to compile Wayland libraries')" \
+                  "message('Skipped SFD_CLOEXEC check for host scanner')" \
+        --replace "error('TFD_CLOEXEC is needed to compile Wayland libraries')" \
+                  "message('Skipped TFD_CLOEXEC check for host scanner')"
+    '';
     nativeBuildInputs = with buildPackages; [
       meson
       ninja
@@ -200,6 +207,14 @@ pkgs.stdenv.mkDerivation {
 
         # Fix mkostemp in os-compatibility.c
         sed -i 's/mkostemp(tmpname, O_CLOEXEC)/mkstemp(tmpname)/' cursor/os-compatibility.c
+
+        # iOS/Darwin lacks Linux signalfd/timerfd; skip meson hard-errors (same
+        # posture as the Android port — event-loop uses epoll-shim on Apple).
+        substituteInPlace meson.build \
+          --replace "error('SFD_CLOEXEC is needed to compile Wayland libraries')" \
+                    "message('Skipped SFD_CLOEXEC check for Apple mobile')" \
+          --replace "error('TFD_CLOEXEC is needed to compile Wayland libraries')" \
+                    "message('Skipped TFD_CLOEXEC check for Apple mobile')"
         
         echo "Applied iOS syscall compatibility patches"
   '';
@@ -284,7 +299,12 @@ pkgs.stdenv.mkDerivation {
 
   installPhase = ''
     runHook preInstall
-    mkdir -p $out/lib $out/include/wayland $out/lib/pkgconfig
+    mkdir -p $out/lib $out/include/wayland $out/lib/pkgconfig $out/bin
+
+    # Host wayland-scanner for cross consumers (fuzzel meson, etc.).
+    cp ${waylandScanner}/bin/wayland-scanner $out/bin/wayland-scanner
+    mkdir -p $out/share/pkgconfig
+    cp ${waylandScanner}/share/pkgconfig/wayland-scanner.pc $out/share/pkgconfig/
 
     # Install static libraries without rebuilding wayland-scanner.
     for libpath in \
@@ -306,6 +326,11 @@ pkgs.stdenv.mkDerivation {
         cp "$header" $out/include/
       fi
     done
+
+    # cursor public header (install_headers() upstream puts it in $includedir root).
+    if [ -f cursor/wayland-cursor.h ]; then
+      cp cursor/wayland-cursor.h $out/include/
+    fi
 
     # Install public headers.
     for header in src/*.h; do
@@ -372,7 +397,7 @@ EOF
 prefix=$out
 exec_prefix=\''${prefix}
 libdir=\''${exec_prefix}/lib
-includedir=\''${prefix}/include/wayland
+includedir=\''${prefix}/include
 
 Name: Wayland Cursor
 Description: Wayland cursor library (iOS cross-compiled)

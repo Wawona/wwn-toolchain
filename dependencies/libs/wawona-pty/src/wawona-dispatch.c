@@ -49,6 +49,10 @@ extern int fastfetch_main(int argc, char *argv[])
 extern int wawona_nvim_main(int argc, char *argv[])
     __attribute__((weak));
 
+/* Provided by wwn-niri fuzzel port (libfuzzel.a, main renamed to fuzzel_main). */
+extern int fuzzel_main(int argc, char *argv[])
+    __attribute__((weak));
+
 /* Provided by libwawona.a (waypipe-ssh feature, Rust waypipe_main). */
 extern int waypipe_main(int argc, char *argv[])
     __attribute__((weak));
@@ -271,6 +275,8 @@ wawona_dispatch_can_handle(const char *argv0)
 		return 1;
 	if (strcmp(name, "fastfetch") == 0 && fastfetch_main != NULL)
 		return 1;
+	if (strcmp(name, "fuzzel") == 0 && fuzzel_main != NULL)
+		return 1;
 	if (wwn_is_waypipe_name(name) && waypipe_main != NULL)
 		return 1;
 	if (wwn_is_nvim_name(name) && wawona_nvim_main != NULL)
@@ -315,6 +321,15 @@ wawona_dispatch_inprocess(const char *path, char *const argv[],
 		while (argv[argc] != NULL)
 			argc++;
 		rc = fastfetch_main(argc, argv);
+		fflush(stdout);
+		fflush(stderr);
+		return rc;
+	}
+
+	if (strcmp(name, "fuzzel") == 0 && fuzzel_main != NULL) {
+		while (argv[argc] != NULL)
+			argc++;
+		rc = fuzzel_main(argc, argv);
 		fflush(stdout);
 		fflush(stderr);
 		return rc;

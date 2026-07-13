@@ -39,6 +39,8 @@ path.write_text(
     + text[end:]
 )
 PY
+    find src/compose -type f \( -name '*.c' -o -name '*.h' \) -exec \
+      sed -i 's/parse_string/xkb_parse_string/g' {} +
   '';
 
   # Allow access to Xcode SDKs and toolchain

@@ -252,17 +252,29 @@ in
   };
   fcft = withPlatformVariants {
     android = null;
-    ios = null;
+    ios = ../../libs/fcft/ios.nix;
+    ipados = ../../libs/fcft/ios.nix;
+    tvos = ../../libs/fcft/ios.nix;
+    visionos = ../../libs/fcft/ios.nix;
+    watchos = ../../libs/fcft/ios.nix;
     macos = ../../libs/fcft/macos.nix;
   };
   tllist = withPlatformVariants {
     android = null;
-    ios = null;
+    ios = ../../libs/tllist/ios.nix;
+    ipados = ../../libs/tllist/ios.nix;
+    tvos = ../../libs/tllist/ios.nix;
+    visionos = ../../libs/tllist/ios.nix;
+    watchos = ../../libs/tllist/ios.nix;
     macos = ../../libs/tllist/macos.nix;
   };
   utf8proc = withPlatformVariants {
     android = null;
-    ios = null;
+    ios = ../../libs/utf8proc/ios.nix;
+    ipados = ../../libs/utf8proc/ios.nix;
+    tvos = ../../libs/utf8proc/ios.nix;
+    visionos = ../../libs/utf8proc/ios.nix;
+    watchos = ../../libs/utf8proc/ios.nix;
     macos = ../../libs/utf8proc/macos.nix;
   };
   # ANGLE: OpenGL ES (GLES2/3) over Metal. macOS uses nixpkgs#angle (cached).
