@@ -65,6 +65,10 @@ extern int wawona_nvim_main(int argc, char *argv[])
 extern int fuzzel_main(int argc, char *argv[])
     __attribute__((weak));
 
+/* Provided by wwn-foot (libfoot.a, main renamed to foot_main). */
+extern int foot_main(int argc, char *argv[])
+    __attribute__((weak));
+
 /* Provided by libwawona.a (waypipe-ssh feature, Rust waypipe_main). */
 extern int waypipe_main(int argc, char *argv[])
     __attribute__((weak));
@@ -289,6 +293,8 @@ wawona_dispatch_can_handle(const char *argv0)
 		return 1;
 	if (strcmp(name, "fuzzel") == 0 && fuzzel_main != NULL)
 		return 1;
+	if (strcmp(name, "foot") == 0 && foot_main != NULL)
+		return 1;
 	if (wwn_is_waypipe_name(name) && waypipe_main != NULL)
 		return 1;
 	if (wwn_is_nvim_name(name) && wawona_nvim_main != NULL)
@@ -344,6 +350,23 @@ wawona_dispatch_inprocess(const char *path, char *const argv[],
 		while (argv[argc] != NULL)
 			argc++;
 		rc = fuzzel_main(argc, argv);
+		fflush(stdout);
+		fflush(stderr);
+		return rc;
+	}
+
+	if (strcmp(name, "foot") == 0 && foot_main != NULL) {
+#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
+		if (!wwn_dispatch_async_worker &&
+		    wawona_dispatch_spawn_async(path, argv, envp) == 0) {
+			fprintf(stderr, "wawona: started foot (detached)\n");
+			fflush(stderr);
+			return 0;
+		}
+#endif
+		while (argv[argc] != NULL)
+			argc++;
+		rc = foot_main(argc, argv);
 		fflush(stdout);
 		fflush(stderr);
 		return rc;
