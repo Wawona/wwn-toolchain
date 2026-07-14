@@ -41,7 +41,16 @@ if usePrebuilt then
       description = "ANGLE OpenGL ES for Android (prebuilt shared)";
       homepage = "https://angleproject.org";
       license = licenses.bsd3;
-      platforms = [ "aarch64-linux-android" ];
+      # Prebuilt aarch64 Android libs are assembled on host Darwin/Linux CI
+      # (cross). Restricting platforms to aarch64-linux-android alone makes
+      # `nix flake check` refuse apps.x86_64-linux.wawona-android.
+      platforms = [
+        "aarch64-linux-android"
+        "x86_64-linux"
+        "aarch64-linux"
+        "x86_64-darwin"
+        "aarch64-darwin"
+      ];
     };
   }
 else
