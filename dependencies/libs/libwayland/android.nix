@@ -209,28 +209,25 @@ pkgs.stdenv.mkDerivation (androidMesonSandbox.apply {
         
         echo "=== Applying Android syscall compatibility patches ==="
         
-        # Disable Meson checks for signalfd and timerfd (not available in Bionic)
-        # Remove the lines from the check array
+        # signalfd is still missing from Bionic; timerfd HAS been in Bionic
+        # since API 19 (Wawona minSdk 24). Stubbing timerfd_create to ENOSYS
+        # made wl_event_loop_add_timer() return NULL, and wayland-backend then
+        # SIGSEGVs in wl_event_source_timer_update(NULL) when a client (e.g.
+        # fuzzel) connects and pending destructors need a wakeup — see #78.
         sed -i "/sys\/signalfd.h/d" meson.build
-        sed -i "/sys\/timerfd.h/d" meson.build
+        # Keep the timerfd meson probe so configure sees the real NDK header.
         # Android cross builds in Nix can mis-detect CLOCK_MONOTONIC at configure
         # time; drop only this declaration check while keeping the remaining checks.
         sed -i "/'header': 'time.h', 'symbol': 'CLOCK_MONOTONIC'/d" meson.build
         
-        # Also try to comment out direct error calls if they exist
         sed -i "s/error.*SFD_CLOEXEC.*/message('Skipped SFD_CLOEXEC check for Android')/g" meson.build
-        sed -i "s/error.*TFD_CLOEXEC.*/message('Skipped TFD_CLOEXEC check for Android')/g" meson.build
         
-        # Android syscall compatibility: Remove signalfd/timerfd usage
-        # These syscalls don't exist in Android's Bionic libc
-        # We need to provide stub implementations that return appropriate values
+        # Stub signalfd only; use real <sys/timerfd.h> from the NDK.
         if [ -f src/event-loop.c ]; then
-          echo "=== Patching event-loop.c for Android ==="
+          echo "=== Patching event-loop.c for Android (signalfd stub, real timerfd) ==="
           
-          # Add stub functions and defines at the very beginning of the file
-          # This ensures they're available before any code tries to use them
           sed -i '1i\
-    /* Android Bionic compatibility: stubs for missing signalfd/timerfd */\
+    /* Android Bionic: stub signalfd (missing); timerfd is real via NDK. */\
     #include <errno.h>\
     #include <signal.h>\
     #include <time.h>\
@@ -262,50 +259,25 @@ pkgs.stdenv.mkDerivation (androidMesonSandbox.apply {
             uint32_t ssi_arch;\
     };\
     \
-    /* Stub implementations that return errors */\
     static inline int android_signalfd(int fd, const sigset_t *mask, int flags) {\
             (void)fd; (void)mask; (void)flags;\
             errno = ENOSYS;\
             return -1;\
     }\
-    static inline int android_timerfd_create(int clockid, int flags) {\
-            (void)clockid; (void)flags;\
-            errno = ENOSYS;\
-            return -1;\
-    }\
-    static inline int android_timerfd_settime(int fd, int flags, const struct itimerspec *new_value, struct itimerspec *old_value) {\
-            (void)fd; (void)flags; (void)new_value; (void)old_value;\
-            errno = ENOSYS;\
-            return -1;\
-    }\
     \
-    /* Redirect calls to our stubs */\
     #define signalfd android_signalfd\
-    #define timerfd_create android_timerfd_create\
-    #define timerfd_settime android_timerfd_settime\
     \
-    /* Define missing constants */\
     #ifndef SFD_CLOEXEC\
     #define SFD_CLOEXEC 0\
     #endif\
     #ifndef SFD_NONBLOCK\
     #define SFD_NONBLOCK 0\
     #endif\
-    #ifndef TFD_CLOEXEC\
-    #define TFD_CLOEXEC 0\
-    #endif\
-    #ifndef TFD_NONBLOCK\
-    #define TFD_NONBLOCK 0\
-    #endif\
-    #ifndef TFD_TIMER_ABSTIME\
-    #define TFD_TIMER_ABSTIME 0\
-    #endif\
     ' src/event-loop.c
           
-          # Remove the actual includes since we're providing stubs
           substituteInPlace src/event-loop.c \
-            --replace "#include <sys/signalfd.h>" "/* Android: signalfd not available in Bionic - using stub */" \
-            --replace "#include <sys/timerfd.h>" "/* Android: timerfd not available in Bionic - using stub */"
+            --replace "#include <sys/signalfd.h>" "/* Android: signalfd not available in Bionic - using stub */"
+          # Keep #include <sys/timerfd.h> — real Bionic timerfd (API 19+).
           
           echo "Applied event-loop.c patches for Android"
         fi
