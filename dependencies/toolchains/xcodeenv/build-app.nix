@@ -161,10 +161,16 @@ stdenv.mkDerivation (
             -u CXX \
             -u LD \
             xcodebuild -downloadPlatform iOS || {
-            echo "ERROR: xcodebuild -downloadPlatform iOS failed (network or Xcode issue)." >&2
-            echo "Fix: Xcode → Settings → Components → install iOS Simulator for this Xcode, then retry." >&2
-            echo "Or export WAWONA_SKIP_IOS_SIMULATOR_PLATFORM_DOWNLOAD=1 if runtimes already match." >&2
-            exit 1
+            # CI runners often already have a matching runtime; Apple CDN flakes
+            # should not fail the build when simctl already lists an iOS runtime.
+            if xcrun simctl list runtimes 2>/dev/null | grep -q 'iOS'; then
+              echo "WARN: xcodebuild -downloadPlatform iOS failed; continuing with existing iOS Simulator runtime." >&2
+            else
+              echo "ERROR: xcodebuild -downloadPlatform iOS failed (network or Xcode issue)." >&2
+              echo "Fix: Xcode → Settings → Components → install iOS Simulator for this Xcode, then retry." >&2
+              echo "Or export WAWONA_SKIP_IOS_SIMULATOR_PLATFORM_DOWNLOAD=1 if runtimes already match." >&2
+              exit 1
+            fi
           }
         fi
       ''}
