@@ -251,7 +251,7 @@ in
     macos = ../../libs/epoll-shim/macos.nix;
   };
   fcft = withPlatformVariants {
-    android = null;
+    android = ../../libs/fcft/android.nix;
     ios = ../../libs/fcft/ios.nix;
     ipados = ../../libs/fcft/ios.nix;
     tvos = ../../libs/fcft/ios.nix;
@@ -260,7 +260,7 @@ in
     macos = ../../libs/fcft/macos.nix;
   };
   tllist = withPlatformVariants {
-    android = null;
+    android = ../../libs/tllist/android.nix;
     ios = ../../libs/tllist/ios.nix;
     ipados = ../../libs/tllist/ios.nix;
     tvos = ../../libs/tllist/ios.nix;
@@ -269,7 +269,7 @@ in
     macos = ../../libs/tllist/macos.nix;
   };
   utf8proc = withPlatformVariants {
-    android = null;
+    android = ../../libs/utf8proc/android.nix;
     ios = ../../libs/utf8proc/ios.nix;
     ipados = ../../libs/utf8proc/ios.nix;
     tvos = ../../libs/utf8proc/ios.nix;
