@@ -359,6 +359,14 @@ typedef struct {
 	const void *replacee;
 } wwn_interpose_t;
 
+/*
+ * dyld interpose needs a real &posix_spawn replacee. On tvOS/watchOS the
+ * spawn.h prototypes are availability-unavailable, so taking their address
+ * is a hard compile error even though we never call through to the real
+ * symbol (in-process dispatch only). Skip interpose there; callers that
+ * need spawn go through wwn_posix_spawn* / the dispatcher directly.
+ */
+#if !TARGET_OS_TV && !TARGET_OS_WATCH
 __attribute__((used)) static const wwn_interpose_t wwn_interpose_posix_spawn
     __attribute__((section("__DATA,__interpose"))) = {
 	.replacement = (const void *)(unsigned long)&wwn_posix_spawn,
@@ -376,5 +384,6 @@ __attribute__((used)) static const wwn_interpose_t wwn_interpose_waitpid
 	.replacement = (const void *)(unsigned long)&wwn_waitpid,
 	.replacee = (const void *)(unsigned long)&waitpid,
 };
+#endif /* !tvOS && !watchOS */
 
 #endif /* Apple mobile */
