@@ -9,6 +9,7 @@
 
 #if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
 
+#include <TargetConditionals.h>
 #include <dlfcn.h>
 #include <errno.h>
 #include <pthread.h>
@@ -122,13 +123,18 @@ wwn_mobile_spawn_copy_argv(struct wwn_mobile_spawn_job *job,
 	return 0;
 }
 
+/* Defined in wawona-dispatch.c — prevents detach re-entry on this thread. */
+extern _Thread_local int wwn_dispatch_async_worker;
+
 static void *
 wwn_mobile_spawn_thread(void *arg)
 {
 	struct wwn_mobile_spawn_job *job = arg;
 
+	wwn_dispatch_async_worker = 1;
 	job->exit_code = wawona_dispatch_inprocess(
 	    job->argv[0], job->argv, NULL);
+	wwn_dispatch_async_worker = 0;
 	if (job->exit_code == WWN_DISPATCH_NOT_HANDLED)
 		job->exit_code = 127;
 	fflush(stdout);

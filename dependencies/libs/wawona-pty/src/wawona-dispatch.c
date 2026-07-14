@@ -32,6 +32,18 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#endif
+
+#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
+/*
+ * Set by wawona-mobile-spawn's worker thread so a re-entered
+ * wawona_dispatch_inprocess runs the Wayland client synchronously instead of
+ * spawning another detached worker (would recurse forever).
+ */
+_Thread_local int wwn_dispatch_async_worker;
+#endif
 
 /*
  * Provided by the Rust uutils umbrella (see patch-coreutils-source.sh):
@@ -302,7 +314,9 @@ wawona_dispatch_inprocess(const char *path, char *const argv[],
 	int argc = 0;
 	int rc;
 
+#if !defined(__APPLE__) || !(TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
 	(void)envp; /* in-process model shares environ; zsh applies assignments */
+#endif
 
 	if (argv == NULL || argv[0] == NULL)
 		return WWN_DISPATCH_NOT_HANDLED;
@@ -384,6 +398,20 @@ wawona_dispatch_inprocess(const char *path, char *const argv[],
 		wwn_client_fn wfn = wwn_lookup_wayland_client(name);
 
 		if (wfn != NULL) {
+#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
+			/*
+			 * Detach Wayland toy clients from the zsh PTY thread so the
+			 * shell stays responsive (#65). Skip when already on a
+			 * spawn worker (re-entry from wawona_dispatch_spawn_async).
+			 */
+			if (!wwn_dispatch_async_worker &&
+			    wawona_dispatch_spawn_async(path, argv, envp) == 0) {
+				fprintf(stderr, "wawona: started %s (detached)\n",
+				        name);
+				fflush(stderr);
+				return 0;
+			}
+#endif
 			while (argv[argc] != NULL)
 				argc++;
 			rc = wfn(argc, argv);
