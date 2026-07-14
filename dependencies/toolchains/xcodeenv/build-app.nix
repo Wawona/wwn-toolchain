@@ -162,9 +162,11 @@ stdenv.mkDerivation (
             -u LD \
             xcodebuild -downloadPlatform iOS || {
             # CI runners often already have a matching runtime; Apple CDN flakes
-            # should not fail the build when simctl already lists an iOS runtime.
-            if xcrun simctl list runtimes 2>/dev/null | grep -q 'iOS'; then
-              echo "WARN: xcodebuild -downloadPlatform iOS failed; continuing with existing iOS Simulator runtime." >&2
+            # and transient "Unable to connect to simulator" must not fail the
+            # build when an iOS Simulator SDK/runtime is already present.
+            if xcrun simctl list runtimes 2>/dev/null | grep -q 'iOS' \
+              || xcodebuild -showsdks 2>/dev/null | grep -q 'iphonesimulator'; then
+              echo "WARN: xcodebuild -downloadPlatform iOS failed; continuing with existing iOS Simulator SDK/runtime." >&2
             else
               echo "ERROR: xcodebuild -downloadPlatform iOS failed (network or Xcode issue)." >&2
               echo "Fix: Xcode → Settings → Components → install iOS Simulator for this Xcode, then retry." >&2
