@@ -229,8 +229,16 @@ wawona_dispatch_spawn_async(const char *path, char *const argv[],
 	}
 
 	(void)pthread_detach(job->thread);
-	fprintf(stderr,
-	        "wawona-mobile-spawn: started async '%s'\n", probe);
+	{
+		const char *wd = getenv("WAYLAND_DISPLAY");
+		const char *nested = getenv("NIRI_NESTED_WAYLAND_DISPLAY");
+		fprintf(stderr,
+		        "wawona-mobile-spawn: started async '%s' "
+		        "WAYLAND_DISPLAY=%s NIRI_NESTED=%s\n",
+		        probe,
+		        wd ? wd : "(null)",
+		        nested ? nested : "(null)");
+	}
 	return 0;
 }
 
