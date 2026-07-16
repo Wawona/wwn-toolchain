@@ -145,7 +145,7 @@ stdenv.mkDerivation (
       mkdir -p "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"
 
       ${lib.optionalString release ''
-        ${lib.optionalString (!automaticProvisioning) ''
+        ${lib.optionalString (!automaticProvisioning && !matchHostSigning) ''
           keychainName="$(basename $out)"
           security create-keychain -p "" $keychainName
           security default-keychain -s $keychainName
