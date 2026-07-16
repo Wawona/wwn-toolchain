@@ -22,6 +22,9 @@
   developmentTeam ? null,
   generateIPA ? false,
   generateXCArchive ? false,
+  # Impure CI: signing material already installed by fastlane match into the
+  # host keychain/profiles (see WAWONA_HOST_HOME). Skips Automatic signing.
+  matchHostSigning ? false,
   enableWirelessDistribution ? false,
   installURL ? null,
   bundleId ? null,
@@ -34,6 +37,7 @@ assert
   ->
     (
       automaticProvisioning
+      || matchHostSigning
       || (
         certificateFile != null
         && certificatePassword != null
@@ -91,6 +95,7 @@ let
       "developmentTeam"
       "generateIPA"
       "generateXCArchive"
+      "matchHostSigning"
       "enableWirelessDistribution"
       "installURL"
       "bundleId"
@@ -218,7 +223,7 @@ stdenv.mkDerivation (
         lib.optionalString (_scheme != null) "-scheme ${_scheme}"
       } -sdk ${_sdk} TARGETED_DEVICE_FAMILY="1, 2" ONLY_ACTIVE_ARCH=NO CONFIGURATION_TEMP_DIR=$TMPDIR CONFIGURATION_BUILD_DIR=$out ${
         lib.optionalString (generateIPA || generateXCArchive) "-archivePath \"${name}.xcarchive\" archive"
-      } ${lib.optionalString (release && !automaticProvisioning) ''PROVISIONING_PROFILE=$PROVISIONING_PROFILE OTHER_CODE_SIGN_FLAGS="--keychain $HOME/Library/Keychains/$keychainName-db"''} ${lib.optionalString (release && automaticProvisioning) ''-allowProvisioningUpdates DEVELOPMENT_TEAM=${developmentTeam} CODE_SIGN_STYLE=Automatic''} ${xcodeFlags}
+      } ${lib.optionalString (release && !automaticProvisioning && !matchHostSigning) ''PROVISIONING_PROFILE=$PROVISIONING_PROFILE OTHER_CODE_SIGN_FLAGS="--keychain $HOME/Library/Keychains/$keychainName-db"''} ${lib.optionalString (release && automaticProvisioning && !matchHostSigning) ''-allowProvisioningUpdates DEVELOPMENT_TEAM=${developmentTeam} CODE_SIGN_STYLE=Automatic''} ${lib.optionalString (release && matchHostSigning) ''DEVELOPMENT_TEAM=${developmentTeam} CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="''${WAWONA_CODE_SIGN_IDENTITY:-Apple Distribution}" PROVISIONING_PROFILE_SPECIFIER="''${WAWONA_PROVISIONING_PROFILE_SPECIFIER:-}"''} ${xcodeFlags}
 
       ${lib.optionalString release ''
         ${lib.optionalString generateIPA ''
@@ -227,7 +232,7 @@ stdenv.mkDerivation (
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
           <dict>
-              ${lib.optionalString (!automaticProvisioning) ''
+              ${lib.optionalString (!automaticProvisioning && !matchHostSigning) ''
               <key>signingCertificate</key>
               <string>${codeSignIdentity}</string>
               <key>provisioningProfiles</key>
@@ -238,14 +243,32 @@ stdenv.mkDerivation (
               <key>signingStyle</key>
               <string>manual</string>
               ''}
-              ${lib.optionalString automaticProvisioning ''
+              ${lib.optionalString matchHostSigning ''
+              <key>signingStyle</key>
+              <string>manual</string>
+              <key>teamID</key>
+              <string>${developmentTeam}</string>
+              <key>provisioningProfiles</key>
+              <dict>
+                  <key>${bundleId}</key>
+                  <string>''${WAWONA_PROVISIONING_PROFILE_SPECIFIER:-match AppStore ${bundleId}}</string>
+              </dict>
+              ''}
+              ${lib.optionalString (automaticProvisioning && !matchHostSigning) ''
               <key>signingStyle</key>
               <string>automatic</string>
               <key>teamID</key>
               <string>${developmentTeam}</string>
               ''}
               <key>method</key>
-              <string>${if automaticProvisioning then "development" else signMethod}</string>
+              <string>${
+                if matchHostSigning then
+                  "app-store"
+                else if automaticProvisioning then
+                  "development"
+                else
+                  signMethod
+              }</string>
               ${lib.optionalString (signMethod == "enterprise" || signMethod == "ad-hoc") ''
                 <key>compileBitcode</key>
                 <false/>
