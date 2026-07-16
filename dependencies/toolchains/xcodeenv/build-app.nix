@@ -131,9 +131,12 @@ stdenv.mkDerivation (
         fi
       fi
       export PATH="$DEVELOPER_DIR/Toolchains/XcodeDefault.xctoolchain/usr/bin:$DEVELOPER_DIR/usr/bin:$PATH"
-      # Impure IPA/CI: preserve the host home so fastlane match profiles + the
-      # setup_ci keychain are visible to xcodebuild (TEMP home hides them).
-      if [ -n "''${WAWONA_HOST_HOME:-}" ] && [ -d "''${WAWONA_HOST_HOME}" ]; then
+      # Impure IPA/CI: prefer host home when writable (runner uid via
+      # --option build-users-group ""). nixbld cannot mkdir under /Users/runner,
+      # so fall back to TMPDIR and stage profiles from WAWONA_PROFILES_DIR.
+      if [ -n "''${WAWONA_HOST_HOME:-}" ] && [ -d "''${WAWONA_HOST_HOME}" ] \
+        && mkdir -p "''${WAWONA_HOST_HOME}/.wawona-nix-write-test" 2>/dev/null; then
+        rmdir "''${WAWONA_HOST_HOME}/.wawona-nix-write-test" 2>/dev/null || true
         export HOME="''${WAWONA_HOST_HOME}"
       else
         export HOME="$TMPDIR/home"
@@ -143,6 +146,21 @@ stdenv.mkDerivation (
       mkdir -p "$HOME/Library/Developer/Xcode/Archives"
       mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
       mkdir -p "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"
+      if [ -n "''${WAWONA_PROFILES_DIR:-}" ] && [ -d "''${WAWONA_PROFILES_DIR}" ]; then
+        cp -f "''${WAWONA_PROFILES_DIR}/"*.mobileprovision \
+          "$HOME/Library/MobileDevice/Provisioning Profiles/" 2>/dev/null || true
+        cp -f "''${WAWONA_PROFILES_DIR}/"*.mobileprovision \
+          "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles/" 2>/dev/null || true
+      fi
+      if [ -n "''${WAWONA_HOST_HOME:-}" ] \
+        && [ -f "''${WAWONA_HOST_HOME}/Library/Keychains/fastlane_tmp_keychain-db" ]; then
+        security list-keychains -d user -s \
+          "''${WAWONA_HOST_HOME}/Library/Keychains/fastlane_tmp_keychain-db" \
+          2>/dev/null || true
+        security unlock-keychain -p "" \
+          "''${WAWONA_HOST_HOME}/Library/Keychains/fastlane_tmp_keychain-db" \
+          2>/dev/null || true
+      fi
 
       ${lib.optionalString release ''
         ${lib.optionalString (!automaticProvisioning && !matchHostSigning) ''
