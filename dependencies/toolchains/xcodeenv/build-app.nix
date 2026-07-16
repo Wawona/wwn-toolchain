@@ -71,9 +71,14 @@ let
     else
       sdk;
 
+  # Only for the certificateFile import path. matchHostSigning uses the
+  # host/fastlane keychain — never create/delete a temp keychain there
+  # (login.keychain is often absent on CI runners).
   deleteKeychain = ''
-    security default-keychain -s login.keychain
-    security delete-keychain $keychainName
+    if [ -n "''${keychainName:-}" ]; then
+      security default-keychain -s login.keychain 2>/dev/null || true
+      security delete-keychain "$keychainName" 2>/dev/null || true
+    fi
   '';
 
   xcodewrapperFormalArgs = composeXcodeWrapper.__functionArgs or (builtins.functionArgs composeXcodeWrapper);
@@ -152,14 +157,20 @@ stdenv.mkDerivation (
         cp -f "''${WAWONA_PROFILES_DIR}/"*.mobileprovision \
           "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles/" 2>/dev/null || true
       fi
+      MATCH_KEYCHAIN=""
       if [ -n "''${WAWONA_HOST_HOME:-}" ] \
         && [ -f "''${WAWONA_HOST_HOME}/Library/Keychains/fastlane_tmp_keychain-db" ]; then
-        security list-keychains -d user -s \
-          "''${WAWONA_HOST_HOME}/Library/Keychains/fastlane_tmp_keychain-db" \
-          2>/dev/null || true
-        security unlock-keychain -p "" \
-          "''${WAWONA_HOST_HOME}/Library/Keychains/fastlane_tmp_keychain-db" \
-          2>/dev/null || true
+        MATCH_KEYCHAIN="''${WAWONA_HOST_HOME}/Library/Keychains/fastlane_tmp_keychain-db"
+      elif [ -f "$HOME/Library/Keychains/fastlane_tmp_keychain-db" ]; then
+        MATCH_KEYCHAIN="$HOME/Library/Keychains/fastlane_tmp_keychain-db"
+      fi
+      if [ -n "$MATCH_KEYCHAIN" ]; then
+        security list-keychains -d user -s "$MATCH_KEYCHAIN" 2>/dev/null || true
+        security default-keychain -s "$MATCH_KEYCHAIN" 2>/dev/null || true
+        security unlock-keychain -p "" "$MATCH_KEYCHAIN" 2>/dev/null || true
+        security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "" "$MATCH_KEYCHAIN" 2>/dev/null || true
+        echo "Using match keychain: $MATCH_KEYCHAIN"
+        security find-identity -v -p codesigning "$MATCH_KEYCHAIN" || true
       fi
 
       ${lib.optionalString release ''
@@ -241,7 +252,7 @@ stdenv.mkDerivation (
         lib.optionalString (_scheme != null) "-scheme ${_scheme}"
       } -sdk ${_sdk} TARGETED_DEVICE_FAMILY="1, 2" ONLY_ACTIVE_ARCH=NO CONFIGURATION_TEMP_DIR=$TMPDIR CONFIGURATION_BUILD_DIR=$out ${
         lib.optionalString (generateIPA || generateXCArchive) "-archivePath \"${name}.xcarchive\" archive"
-      } ${lib.optionalString (release && !automaticProvisioning && !matchHostSigning) ''PROVISIONING_PROFILE=$PROVISIONING_PROFILE OTHER_CODE_SIGN_FLAGS="--keychain $HOME/Library/Keychains/$keychainName-db"''} ${lib.optionalString (release && automaticProvisioning && !matchHostSigning) ''-allowProvisioningUpdates DEVELOPMENT_TEAM=${developmentTeam} CODE_SIGN_STYLE=Automatic''} ${lib.optionalString (release && matchHostSigning) ''DEVELOPMENT_TEAM=${developmentTeam} CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="''${WAWONA_CODE_SIGN_IDENTITY:-Apple Distribution}" PROVISIONING_PROFILE_SPECIFIER="''${WAWONA_PROVISIONING_PROFILE_SPECIFIER:-}"''} ${xcodeFlags}
+      } ${lib.optionalString (release && !automaticProvisioning && !matchHostSigning) ''PROVISIONING_PROFILE=$PROVISIONING_PROFILE OTHER_CODE_SIGN_FLAGS="--keychain $HOME/Library/Keychains/$keychainName-db"''} ${lib.optionalString (release && automaticProvisioning && !matchHostSigning) ''-allowProvisioningUpdates DEVELOPMENT_TEAM=${developmentTeam} CODE_SIGN_STYLE=Automatic''} ${lib.optionalString (release && matchHostSigning) ''DEVELOPMENT_TEAM=${developmentTeam} CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="''${WAWONA_CODE_SIGN_IDENTITY:-Apple Distribution}" PROVISIONING_PROFILE_SPECIFIER="''${WAWONA_PROVISIONING_PROFILE_SPECIFIER:-}" OTHER_CODE_SIGN_FLAGS="''${MATCH_KEYCHAIN:+--keychain $MATCH_KEYCHAIN}"''} ${xcodeFlags}
 
       ${lib.optionalString release ''
         ${lib.optionalString generateIPA ''
@@ -325,13 +336,13 @@ stdenv.mkDerivation (
           mv "${name}.xcarchive" $out
         ''}
 
-        ${lib.optionalString (!automaticProvisioning) ''
+        ${lib.optionalString (!automaticProvisioning && !matchHostSigning) ''
           ${deleteKeychain}
         ''}
       ''}
     '';
 
-    failureHook = lib.optionalString (release && !automaticProvisioning) deleteKeychain;
+    failureHook = lib.optionalString (release && !automaticProvisioning && !matchHostSigning) deleteKeychain;
 
     installPhase = "true";
   }
