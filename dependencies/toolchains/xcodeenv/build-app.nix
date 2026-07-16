@@ -102,6 +102,13 @@ in
 stdenv.mkDerivation (
   {
     name = lib.replaceStrings [ " " ] [ "" ] name;
+    impureEnvVars = [
+      "WAWONA_HOST_HOME"
+      "WAWONA_CODE_SIGN_STYLE"
+      "WAWONA_CODE_SIGN_IDENTITY"
+      "WAWONA_PROVISIONING_PROFILE_SPECIFIER"
+      "WAWONA_XCODEBUILD_JOBS"
+    ];
     buildPhase = ''
       export PATH=${xcodewrapper}/bin:$PATH
       export DEVELOPER_DIR="$(/usr/bin/xcode-select -p 2>/dev/null || true)"
@@ -119,11 +126,18 @@ stdenv.mkDerivation (
         fi
       fi
       export PATH="$DEVELOPER_DIR/Toolchains/XcodeDefault.xctoolchain/usr/bin:$DEVELOPER_DIR/usr/bin:$PATH"
-      export HOME="$TMPDIR/home"
+      # Impure IPA/CI: preserve the host home so fastlane match profiles + the
+      # setup_ci keychain are visible to xcodebuild (TEMP home hides them).
+      if [ -n "''${WAWONA_HOST_HOME:-}" ] && [ -d "''${WAWONA_HOST_HOME}" ]; then
+        export HOME="''${WAWONA_HOST_HOME}"
+      else
+        export HOME="$TMPDIR/home"
+      fi
       export CFFIXED_USER_HOME="$HOME"
       mkdir -p "$HOME/Library/Developer/Xcode/DerivedData"
       mkdir -p "$HOME/Library/Developer/Xcode/Archives"
       mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+      mkdir -p "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"
 
       ${lib.optionalString release ''
         ${lib.optionalString (!automaticProvisioning) ''
