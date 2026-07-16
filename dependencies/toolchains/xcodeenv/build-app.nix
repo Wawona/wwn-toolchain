@@ -47,7 +47,16 @@ assert automaticProvisioning -> developmentTeam != null;
 
 let
   _target = if target == null then name else target;
-  targetFlag = lib.optionalString (scheme == null) "-target ${_target}";
+  # Archive/IPA requires -scheme; -target alone fails on modern Xcode with:
+  #   "The flag -scheme is required when specifying -archivePath"
+  _scheme =
+    if scheme != null then
+      scheme
+    else if generateIPA || generateXCArchive then
+      _target
+    else
+      null;
+  targetFlag = lib.optionalString (_scheme == null) "-target ${_target}";
 
   _configuration =
     if configuration == null then if release then "Release" else "Debug" else configuration;
@@ -192,7 +201,7 @@ stdenv.mkDerivation (
         -u CXX \
         -u LD \
         xcodebuild ${targetFlag} -configuration ${_configuration} ${
-        lib.optionalString (scheme != null) "-scheme ${scheme}"
+        lib.optionalString (_scheme != null) "-scheme ${_scheme}"
       } -sdk ${_sdk} TARGETED_DEVICE_FAMILY="1, 2" ONLY_ACTIVE_ARCH=NO CONFIGURATION_TEMP_DIR=$TMPDIR CONFIGURATION_BUILD_DIR=$out ${
         lib.optionalString (generateIPA || generateXCArchive) "-archivePath \"${name}.xcarchive\" archive"
       } ${lib.optionalString (release && !automaticProvisioning) ''PROVISIONING_PROFILE=$PROVISIONING_PROFILE OTHER_CODE_SIGN_FLAGS="--keychain $HOME/Library/Keychains/$keychainName-db"''} ${lib.optionalString (release && automaticProvisioning) ''-allowProvisioningUpdates DEVELOPMENT_TEAM=${developmentTeam} CODE_SIGN_STYLE=Automatic''} ${xcodeFlags}
