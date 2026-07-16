@@ -118,6 +118,11 @@ stdenv.mkDerivation (
       "WAWONA_CODE_SIGN_IDENTITY"
       "WAWONA_PROVISIONING_PROFILE_SPECIFIER"
       "WAWONA_XCODEBUILD_JOBS"
+      # Paths only (contents never logged). Darwin daemon may not forward these;
+      # match-host-signing-attrs also bakes the paths at --impure eval time.
+      "WAWONA_DIST_P12_FILE"
+      "WAWONA_DIST_P12_PASS_FILE"
+      "WAWONA_PROFILES_DIR"
     ];
     buildPhase = ''
       export PATH=${xcodewrapper}/bin:$PATH
@@ -136,41 +141,89 @@ stdenv.mkDerivation (
         fi
       fi
       export PATH="$DEVELOPER_DIR/Toolchains/XcodeDefault.xctoolchain/usr/bin:$DEVELOPER_DIR/usr/bin:$PATH"
-      # Impure IPA/CI: prefer host home when writable (runner uid via
-      # --option build-users-group ""). nixbld cannot mkdir under /Users/runner,
-      # so fall back to TMPDIR and stage profiles from WAWONA_PROFILES_DIR.
-      if [ -n "''${WAWONA_HOST_HOME:-}" ] && [ -d "''${WAWONA_HOST_HOME}" ] \
-        && mkdir -p "''${WAWONA_HOST_HOME}/.wawona-nix-write-test" 2>/dev/null; then
-        rmdir "''${WAWONA_HOST_HOME}/.wawona-nix-write-test" 2>/dev/null || true
-        export HOME="''${WAWONA_HOST_HOME}"
-      else
-        export HOME="$TMPDIR/home"
-      fi
-      export CFFIXED_USER_HOME="$HOME"
-      mkdir -p "$HOME/Library/Developer/Xcode/DerivedData"
-      mkdir -p "$HOME/Library/Developer/Xcode/Archives"
-      mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
-      mkdir -p "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"
-      if [ -n "''${WAWONA_PROFILES_DIR:-}" ] && [ -d "''${WAWONA_PROFILES_DIR}" ]; then
-        cp -f "''${WAWONA_PROFILES_DIR}/"*.mobileprovision \
-          "$HOME/Library/MobileDevice/Provisioning Profiles/" 2>/dev/null || true
-        cp -f "''${WAWONA_PROFILES_DIR}/"*.mobileprovision \
-          "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles/" 2>/dev/null || true
-      fi
       MATCH_KEYCHAIN=""
-      if [ -n "''${WAWONA_HOST_HOME:-}" ] \
-        && [ -f "''${WAWONA_HOST_HOME}/Library/Keychains/fastlane_tmp_keychain-db" ]; then
-        MATCH_KEYCHAIN="''${WAWONA_HOST_HOME}/Library/Keychains/fastlane_tmp_keychain-db"
-      elif [ -f "$HOME/Library/Keychains/fastlane_tmp_keychain-db" ]; then
-        MATCH_KEYCHAIN="$HOME/Library/Keychains/fastlane_tmp_keychain-db"
-      fi
-      if [ -n "$MATCH_KEYCHAIN" ]; then
-        security list-keychains -d user -s "$MATCH_KEYCHAIN" 2>/dev/null || true
-        security default-keychain -s "$MATCH_KEYCHAIN" 2>/dev/null || true
-        security unlock-keychain -p "" "$MATCH_KEYCHAIN" 2>/dev/null || true
-        security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "" "$MATCH_KEYCHAIN" 2>/dev/null || true
-        echo "Using match keychain: $MATCH_KEYCHAIN"
-        security find-identity -v -p codesigning "$MATCH_KEYCHAIN" || true
+      keychainName=""
+      # matchHostSigning: import staged Distribution P12 into a private keychain
+      # under TMPDIR (readable by this build). Do not print pass/p12 contents.
+      ${lib.optionalString (release && matchHostSigning) ''
+        if [ -n "''${WAWONA_DIST_P12_FILE:-}" ] && [ -f "''${WAWONA_DIST_P12_FILE}" ] \
+          && [ -n "''${WAWONA_DIST_P12_PASS_FILE:-}" ] && [ -f "''${WAWONA_DIST_P12_PASS_FILE}" ]; then
+          export HOME="$TMPDIR/wawona-sign-home"
+          export CFFIXED_USER_HOME="$HOME"
+          mkdir -p "$HOME/Library/Keychains"
+          mkdir -p "$HOME/Library/Developer/Xcode/DerivedData"
+          mkdir -p "$HOME/Library/Developer/Xcode/Archives"
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          mkdir -p "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"
+          if [ -n "''${WAWONA_PROFILES_DIR:-}" ] && [ -d "''${WAWONA_PROFILES_DIR}" ]; then
+            cp -f "''${WAWONA_PROFILES_DIR}/"*.mobileprovision \
+              "$HOME/Library/MobileDevice/Provisioning Profiles/" 2>/dev/null || true
+            cp -f "''${WAWONA_PROFILES_DIR}/"*.mobileprovision \
+              "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles/" 2>/dev/null || true
+          fi
+          DIST_PASS="$(cat "''${WAWONA_DIST_P12_PASS_FILE}")"
+          keychainName="wawona-dist-signing"
+          MATCH_KEYCHAIN="$HOME/Library/Keychains/''${keychainName}-db"
+          security delete-keychain "$keychainName" 2>/dev/null || true
+          security create-keychain -p "$DIST_PASS" "$keychainName"
+          security set-keychain-settings -t 3600 -u "$keychainName"
+          security unlock-keychain -p "$DIST_PASS" "$keychainName"
+          security list-keychains -d user -s "$MATCH_KEYCHAIN"
+          security default-keychain -s "$MATCH_KEYCHAIN"
+          # -A: allow codesign without UI prompt in headless CI
+          security import "''${WAWONA_DIST_P12_FILE}" -k "$MATCH_KEYCHAIN" -P "$DIST_PASS" \
+            -A -T /usr/bin/codesign -T /usr/bin/security -T /usr/bin/xcodebuild >/dev/null
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$DIST_PASS" "$MATCH_KEYCHAIN" >/dev/null
+          RESOLVED="$(security find-identity -v -p codesigning "$MATCH_KEYCHAIN" 2>/dev/null \
+            | awk '/Apple Distribution|iPhone Distribution|iOS Distribution/ { print $2; exit }')"
+          if [ -z "$RESOLVED" ]; then
+            echo "ERROR: Distribution identity missing after P12 import (no Apple Distribution in build keychain)." >&2
+            exit 1
+          fi
+          export WAWONA_CODE_SIGN_IDENTITY="$RESOLVED"
+          echo "Distribution identity ready (''${RESOLVED:0:8}…)"
+          unset DIST_PASS
+        fi
+      ''}
+      # Fallback: host fastlane keychain / writable HOME (legacy path)
+      if [ -z "$MATCH_KEYCHAIN" ]; then
+        if [ -n "''${WAWONA_HOST_HOME:-}" ] && [ -d "''${WAWONA_HOST_HOME}" ] \
+          && mkdir -p "''${WAWONA_HOST_HOME}/.wawona-nix-write-test" 2>/dev/null; then
+          rmdir "''${WAWONA_HOST_HOME}/.wawona-nix-write-test" 2>/dev/null || true
+          export HOME="''${WAWONA_HOST_HOME}"
+        else
+          export HOME="$TMPDIR/home"
+        fi
+        export CFFIXED_USER_HOME="$HOME"
+        mkdir -p "$HOME/Library/Developer/Xcode/DerivedData"
+        mkdir -p "$HOME/Library/Developer/Xcode/Archives"
+        mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+        mkdir -p "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"
+        if [ -n "''${WAWONA_PROFILES_DIR:-}" ] && [ -d "''${WAWONA_PROFILES_DIR}" ]; then
+          cp -f "''${WAWONA_PROFILES_DIR}/"*.mobileprovision \
+            "$HOME/Library/MobileDevice/Provisioning Profiles/" 2>/dev/null || true
+          cp -f "''${WAWONA_PROFILES_DIR}/"*.mobileprovision \
+            "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles/" 2>/dev/null || true
+        fi
+        if [ -n "''${WAWONA_HOST_HOME:-}" ] \
+          && [ -f "''${WAWONA_HOST_HOME}/Library/Keychains/fastlane_tmp_keychain-db" ]; then
+          MATCH_KEYCHAIN="''${WAWONA_HOST_HOME}/Library/Keychains/fastlane_tmp_keychain-db"
+        elif [ -f "$HOME/Library/Keychains/fastlane_tmp_keychain-db" ]; then
+          MATCH_KEYCHAIN="$HOME/Library/Keychains/fastlane_tmp_keychain-db"
+        fi
+        if [ -n "$MATCH_KEYCHAIN" ]; then
+          security list-keychains -d user -s "$MATCH_KEYCHAIN" 2>/dev/null || true
+          security default-keychain -s "$MATCH_KEYCHAIN" 2>/dev/null || true
+          security unlock-keychain -p "" "$MATCH_KEYCHAIN" 2>/dev/null || true
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "" "$MATCH_KEYCHAIN" 2>/dev/null || true
+          echo "Using host match keychain"
+          RESOLVED="$(security find-identity -v -p codesigning "$MATCH_KEYCHAIN" 2>/dev/null \
+            | awk '/Apple Distribution|iPhone Distribution|iOS Distribution/ { print $2; exit }')"
+          if [ -n "$RESOLVED" ]; then
+            export WAWONA_CODE_SIGN_IDENTITY="$RESOLVED"
+            echo "Distribution identity ready (''${RESOLVED:0:8}…)"
+          fi
+        fi
       fi
 
       ${lib.optionalString release ''
@@ -339,10 +392,21 @@ stdenv.mkDerivation (
         ${lib.optionalString (!automaticProvisioning && !matchHostSigning) ''
           ${deleteKeychain}
         ''}
+        ${lib.optionalString matchHostSigning ''
+          if [ -n "''${keychainName:-}" ]; then
+            security delete-keychain "$keychainName" 2>/dev/null || true
+          fi
+        ''}
       ''}
     '';
 
-    failureHook = lib.optionalString (release && !automaticProvisioning && !matchHostSigning) deleteKeychain;
+    failureHook =
+      lib.optionalString (release && !automaticProvisioning && !matchHostSigning) deleteKeychain
+      + lib.optionalString (release && matchHostSigning) ''
+        if [ -n "''${keychainName:-}" ]; then
+          security delete-keychain "$keychainName" 2>/dev/null || true
+        fi
+      '';
 
     installPhase = "true";
   }
