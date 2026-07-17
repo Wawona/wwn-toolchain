@@ -46,8 +46,17 @@ pkgs.stdenv.mkDerivation {
   ];
   buildInputs = [ ];
 
+  # App Store Connect rejects IPAs that import libSystem getprogname (private
+  # ___progname). fontconfig only uses it once for a log prefix — replace with
+  # a string so we never pull that symbol. Do not -include apple-polyfills.h:
+  # a getprogname macro breaks stdlib prototypes / fccompat mkstemp.
+  postPatch = ''
+    substituteInPlace src/fcdefault.c \
+      --replace-fail 'getprogname()' '"fontconfig"'
+  '';
+
   preConfigure =
-    mesonSetup.preConfigureShell { includePolyfills = true; }
+    mesonSetup.preConfigureShell { }
     + mesonSetup.nativeFileShell;
 
   configurePhase = ''
