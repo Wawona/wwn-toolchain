@@ -25,7 +25,11 @@ static inline int pipe2(int fds[2], int flags) {
 #include <errno.h>
 
 #if TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH || TARGET_OS_VISION
-/* Avoid libSystem getprogname → private ___progname (App Store altool 11). */
+/* Avoid libSystem getprogname → private ___progname (App Store altool 11).
+ * Include stdlib first so its getprogname(void) prototype is parsed before
+ * we install the 0-arg function-like macro (otherwise *getprogname(void)
+ * expands as a macro call with one argument). */
+#include <stdlib.h>
 static inline const char *wwn_getprogname(void) { return "Wawona"; }
 #ifdef getprogname
 #undef getprogname
