@@ -47,7 +47,7 @@ pkgs.stdenv.mkDerivation {
   buildInputs = [ ];
 
   preConfigure =
-    mesonSetup.preConfigureShell { }
+    mesonSetup.preConfigureShell { includePolyfills = true; }
     + mesonSetup.nativeFileShell;
 
   configurePhase = ''

@@ -24,6 +24,15 @@ static inline int pipe2(int fds[2], int flags) {
 #include <TargetConditionals.h>
 #include <errno.h>
 
+#if TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH || TARGET_OS_VISION
+/* Avoid libSystem getprogname → private ___progname (App Store altool 11). */
+static inline const char *wwn_getprogname(void) { return "Wawona"; }
+#ifdef getprogname
+#undef getprogname
+#endif
+#define getprogname() wwn_getprogname()
+#endif
+
 #if TARGET_OS_TV || TARGET_OS_WATCH
 /* fork/exec are prohibited on tvOS/watchOS; stub so glib (gbacktrace)
  * compiles and fails gracefully at runtime instead of at compile time. */
