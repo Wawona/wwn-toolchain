@@ -19,10 +19,11 @@
      *     Keep in-process editor names in sync with Wawona bundling (wwn-neovim).
  *   - waypipe_main is weak: absent when libwawona.a is built without waypipe-ssh.
  *     Uses in-process libssh2 for Wayland forwarding over SSH.
- *   - ssh_main / ssh_keygen_main / scp_main are weak: absent when
- *     libssh-inprocess.a (openssh built for iOS) is not force-loaded.
- *     ssh_main provides a full OpenSSH client (set SSH_ASKPASS_PASSWORD for
- *     password auth); ssh_keygen_main generates keys; scp_main copies files.
+ *   - ssh_main / ssh_keygen_main / scp_main:
+ *       * Apple mobile (iOS/iPadOS/tvOS/watchOS/visionOS): strong externs to
+ *         App-target stubs (never OpenSSH / libssh-inprocess.a). Remote SSH
+ *         goes through waypipe_main + libssh2 only (App Store).
+ *       * Elsewhere: weak; may be satisfied by OpenSSH in-process on macOS.
  *   - Utilities that call process::exit()/abort() internally would still take
  *     the app down; such utils are kept OUT of both this table and the Cargo
  *     feature subset. Keep the two lists in sync.
@@ -36,7 +37,12 @@
 #include <TargetConditionals.h>
 #endif
 
-#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
+#if defined(__APPLE__) && \
+    (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH || TARGET_OS_VISION)
+#define WAWONA_APPLE_MOBILE 1
+#endif
+
+#if defined(WAWONA_APPLE_MOBILE)
 /*
  * Set by wawona-mobile-spawn's worker thread so a re-entered
  * wawona_dispatch_inprocess runs the Wayland client synchronously instead of
@@ -74,20 +80,24 @@ extern int waypipe_main(int argc, char *argv[])
     __attribute__((weak));
 
 /*
- * Provided by libssh-inprocess.a (openssh built for iOS, no fork/exec).
- * ssh_main: full OpenSSH client (connects via tcp, password via
- *   SSH_ASKPASS_PASSWORD env var).
- * ssh_keygen_main: key-generation tool (no network).
- * scp_main: secure copy client.
- * These are absent when the openssh static library is not linked, so
- * keep them weak.
+ * OpenSSH CLI entry points.
+ * Apple mobile: strong refs to app-target stubs (WWNAppleMobileOptionalStubs.c /
+ * WWNWatchStubs.c). Darwin will not leave weak imports undefined when this .o
+ * is -force_load'd — and we must never ship libssh-inprocess.a on App Store
+ * targets. macOS may still weak-link a real OpenSSH in-process archive.
  */
+#if defined(WAWONA_APPLE_MOBILE)
+extern int ssh_main(int argc, char *argv[]);
+extern int ssh_keygen_main(int argc, char *argv[]);
+extern int scp_main(int argc, char *argv[]);
+#else
 extern int ssh_main(int argc, char *argv[])
     __attribute__((weak));
 extern int ssh_keygen_main(int argc, char *argv[])
     __attribute__((weak));
 extern int scp_main(int argc, char *argv[])
     __attribute__((weak));
+#endif
 
 /*
  * Bundled Wayland demo clients from libweston-13.a.
@@ -97,6 +107,9 @@ extern int scp_main(int argc, char *argv[])
  * toytoolkit archive is absent (e.g. watchOS).
  */
 extern int weston_simple_shm_main(int argc, char *argv[])
+    __attribute__((weak));
+/* Real weston-terminal (libweston-terminal.a); not a toytoolkit demo. */
+extern int weston_terminal_main(int argc, char *argv[])
     __attribute__((weak));
 extern int flower_main(int argc, char *argv[])
     __attribute__((weak));
@@ -200,6 +213,7 @@ typedef struct {
  */
 static const wwn_wayland_entry_t wwn_wayland_clients[] = {
 	{ "weston-simple-shm", (wwn_client_fn)weston_simple_shm_main },
+	{ "weston-terminal",   (wwn_client_fn)weston_terminal_main },
 	{ "weston-flower",     (wwn_client_fn)flower_main     },
 	{ "weston-clickdot",   (wwn_client_fn)clickdot_main   },
 	{ "weston-smoke",      (wwn_client_fn)smoke_main      },
@@ -437,6 +451,37 @@ wawona_dispatch_inprocess(const char *path, char *const argv[],
 #endif
 			while (argv[argc] != NULL)
 				argc++;
+			/*
+			 * weston-terminal needs an explicit --shell on Apple mobile
+			 * (in-process zsh). Fuzzel desktop Exec=weston-terminal has
+			 * no args; inject WAWONA_SHELL / /usr/bin/zsh.
+			 */
+			if (strcmp(name, "weston-terminal") == 0) {
+				int has_shell = 0;
+				int i;
+
+				for (i = 1; i < argc; i++) {
+					if (strcmp(argv[i], "--shell") == 0) {
+						has_shell = 1;
+						break;
+					}
+				}
+				if (!has_shell) {
+					const char *shell = getenv("WAWONA_SHELL");
+					char *term_argv[4];
+
+					term_argv[0] = (char *)"weston-terminal";
+					term_argv[1] = (char *)"--shell";
+					term_argv[2] = (char *)(shell && shell[0]
+					                            ? shell
+					                            : "/usr/bin/zsh");
+					term_argv[3] = NULL;
+					rc = wfn(3, term_argv);
+					fflush(stdout);
+					fflush(stderr);
+					return rc;
+				}
+			}
 			rc = wfn(argc, argv);
 			fflush(stdout);
 			fflush(stderr);
