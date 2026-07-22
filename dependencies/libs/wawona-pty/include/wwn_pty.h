@@ -18,7 +18,7 @@ typedef struct wwn_pty_session wwn_pty_session;
  * zsh wires STDERR to this fd so NSLog/os_log stays out of weston-terminal. */
 int wwn_app_log_fd(void);
 
-#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
+#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH || TARGET_OS_VISION)
 void wwn_pty_tty_shim_set_winsize(const struct winsize *ws);
 int wwn_pty_tty_shim_get_winsize(struct winsize *ws);
 void wwn_pty_ios_signal_shells(void);

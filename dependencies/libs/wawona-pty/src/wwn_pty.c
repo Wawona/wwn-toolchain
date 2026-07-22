@@ -21,7 +21,7 @@
 #if defined(__APPLE__)
 #include <TargetConditionals.h>
 #endif
-#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
+#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH || TARGET_OS_VISION)
 #include <sys/socket.h>
 #include <pthread.h>
 #include <dlfcn.h>
@@ -46,7 +46,7 @@ app_log_fd_init(void)
 		g_app_log_fd = STDERR_FILENO;
 }
 
-#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
+#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH || TARGET_OS_VISION)
 /*
  * Cached libc targets for __DATA,__interpose shims.
  *
@@ -206,7 +206,7 @@ shell_is_runnable(const char *canonical_shell)
 {
 	struct stat st;
 
-#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
+#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH || TARGET_OS_VISION)
 	/*
 	 * iOS does not honor Unix execute bits on signed bundle Mach-O.
 	 * Existence + regular file under the allowlist is sufficient; AMFI
@@ -254,7 +254,7 @@ wwn_pty_is_allowed_shell_path(const char *shell_path)
 	if (shell_path == NULL || shell_path[0] == '\0')
 		return 0;
 
-#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
+#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH || TARGET_OS_VISION)
 	if (getenv("WAWONA_ZSH_IN_PROCESS") != NULL)
 		return 1;
 #endif
@@ -262,7 +262,7 @@ wwn_pty_is_allowed_shell_path(const char *shell_path)
 	if (realpath_or_copy(shell_path, canonical_shell, sizeof canonical_shell) != 0)
 		return 0;
 
-#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
+#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH || TARGET_OS_VISION)
 	return ios_shell_path_allowed(canonical_shell);
 #elif defined(__ANDROID__)
 	if (strstr(canonical_shell, "libzsh_bin.so") != NULL)
@@ -331,7 +331,7 @@ wwn_pty_is_allowed_shell_path(const char *shell_path)
 #endif
 }
 
-#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
+#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH || TARGET_OS_VISION)
 static int ios_pty_input_read = -1;
 static int ios_pty_input_write = -1;
 static pthread_mutex_t ios_terminal_master_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -437,7 +437,7 @@ open_posix_pty(int *master_fd, int *slave_fd, const struct winsize *ws)
 int
 wwn_pty_open(int *master_fd, int *slave_fd, const struct winsize *ws)
 {
-#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
+#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH || TARGET_OS_VISION)
 	int err;
 
 	if (master_fd == NULL || slave_fd == NULL) {
@@ -478,7 +478,7 @@ wwn_pty_open(int *master_fd, int *slave_fd, const struct winsize *ws)
 #endif
 }
 
-#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
+#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH || TARGET_OS_VISION)
 struct wwn_ios_shell_job {
 	pid_t fake_pid;
 	pthread_t thread;
@@ -1063,7 +1063,7 @@ spawn_on_slave(const char *shell_path, char *const argv[], int slave_fd,
 		return -1;
 	}
 
-#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
+#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH || TARGET_OS_VISION)
 	return ios_spawn_zsh_inprocess(shell_path, argv, slave_fd, pace_read_fd, envp);
 #elif defined(__ANDROID__)
 	if (argv == NULL || argv[0] == NULL) {
@@ -1120,7 +1120,7 @@ spawn_on_slave(const char *shell_path, char *const argv[], int slave_fd,
 		return -1;
 	}
 
-#if !defined(__APPLE__) || !(TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
+#if !defined(__APPLE__) || !(TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH || TARGET_OS_VISION)
 	posix_spawnattr_setflags(&attrs, POSIX_SPAWN_SETPGROUP);
 	if (posix_spawnattr_setpgroup(&attrs, 0) != 0) {
 		posix_spawnattr_destroy(&attrs);
@@ -1230,13 +1230,13 @@ wwn_pty_set_winsize(int master_fd, const struct winsize *ws)
 		errno = EINVAL;
 		return -1;
 	}
-#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
+#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH || TARGET_OS_VISION)
 	wwn_pty_tty_shim_set_winsize(ws);
 	ios_broadcast_sigwinch();
 #endif
 	if (ioctl(master_fd, TIOCSWINSZ, ws) == 0)
 		return 0;
-#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
+#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH || TARGET_OS_VISION)
 	/* socketpair I/O fallback is not a TTY; ignore ENOTTY like macOS PTY shims. */
 	if (errno == ENOTTY)
 		return 0;
@@ -1284,7 +1284,7 @@ wwn_pty_session_destroy(wwn_pty_session *session)
 	free(session);
 }
 
-#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
+#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH || TARGET_OS_VISION)
 static int ios_terminal_master = -1;
 
 void
@@ -1343,7 +1343,7 @@ wwn_pty_ios_kick_shell_display(void)
 }
 #endif
 
-#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
+#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH || TARGET_OS_VISION)
 #include <stdarg.h>
 #include <stdbool.h>
 

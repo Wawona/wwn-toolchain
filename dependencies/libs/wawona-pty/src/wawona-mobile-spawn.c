@@ -7,7 +7,7 @@
  */
 #include "wwn_pty.h"
 
-#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
+#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH || TARGET_OS_VISION)
 
 #include <TargetConditionals.h>
 #include <dlfcn.h>

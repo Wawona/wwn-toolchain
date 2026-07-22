@@ -20,10 +20,11 @@
  *   - waypipe_main is weak: absent when libwawona.a is built without waypipe-ssh.
  *     Uses in-process libssh2 for Wayland forwarding over SSH.
  *   - ssh_main / ssh_keygen_main / scp_main:
- *       * Apple mobile (iOS/iPadOS/tvOS/watchOS/visionOS): strong externs to
- *         App-target stubs (never OpenSSH / libssh-inprocess.a). Remote SSH
- *         goes through waypipe_main + libssh2 only (App Store).
- *       * Elsewhere: weak; may be satisfied by OpenSSH in-process on macOS.
+ *       * Apple mobile (iOS/iPadOS/tvOS/watchOS/visionOS): strong externs
+ *         satisfied by wwn-ssh libwwn-ssh-cli.a (libssh2 CLI — never OpenSSH /
+ *         libssh-inprocess.a). Terminal + Settings keygen use these entry
+ *         points; waypipe-over-SSH still uses waypipe_main + libssh2 streamlocal.
+ *       * Elsewhere: weak; macOS/Linux typically exec OpenSSH from PATH.
  *   - Utilities that call process::exit()/abort() internally would still take
  *     the app down; such utils are kept OUT of both this table and the Cargo
  *     feature subset. Keep the two lists in sync.
@@ -80,11 +81,10 @@ extern int waypipe_main(int argc, char *argv[])
     __attribute__((weak));
 
 /*
- * OpenSSH CLI entry points.
- * Apple mobile: strong refs to app-target stubs (WWNAppleMobileOptionalStubs.c /
- * WWNWatchStubs.c). Darwin will not leave weak imports undefined when this .o
- * is -force_load'd — and we must never ship libssh-inprocess.a on App Store
- * targets. macOS may still weak-link a real OpenSSH in-process archive.
+ * SSH CLI entry points (ssh / ssh-keygen / scp).
+ * Apple mobile: strong refs to libwwn-ssh-cli.a (wwn-ssh libssh2 CLI). Darwin
+ * will not leave these undefined when this .o is -force_load'd — and we must
+ * never ship libssh-inprocess.a on App Store targets.
  */
 #if defined(WAWONA_APPLE_MOBILE)
 extern int ssh_main(int argc, char *argv[]);
@@ -141,7 +141,7 @@ extern int constraints_main(int argc, char *argv[])
 static void
 wwn_dispatch_sync_terminal_size_env(void)
 {
-#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
+#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH || TARGET_OS_VISION)
 	struct winsize ws;
 	char buf[16];
 
@@ -334,7 +334,7 @@ wawona_dispatch_inprocess(const char *path, char *const argv[],
 	int argc = 0;
 	int rc;
 
-#if !defined(__APPLE__) || !(TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
+#if !defined(__APPLE__) || !(TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH || TARGET_OS_VISION)
 	(void)envp; /* in-process model shares environ; zsh applies assignments */
 #endif
 
@@ -370,7 +370,7 @@ wawona_dispatch_inprocess(const char *path, char *const argv[],
 	}
 
 	if (strcmp(name, "foot") == 0 && foot_main != NULL) {
-#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
+#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH || TARGET_OS_VISION)
 		if (!wwn_dispatch_async_worker &&
 		    wawona_dispatch_spawn_async(path, argv, envp) == 0) {
 			fprintf(stderr, "wawona: started foot (detached)\n");
@@ -435,7 +435,7 @@ wawona_dispatch_inprocess(const char *path, char *const argv[],
 		wwn_client_fn wfn = wwn_lookup_wayland_client(name);
 
 		if (wfn != NULL) {
-#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
+#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH || TARGET_OS_VISION)
 			/*
 			 * Detach Wayland toy clients from the zsh PTY thread so the
 			 * shell stays responsive (#65). Skip when already on a
