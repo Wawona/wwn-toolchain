@@ -47,11 +47,116 @@ app_log_fd_init(void)
 }
 
 #if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
+/*
+ * Cached libc targets for __DATA,__interpose shims.
+ *
+ * Never call dlsym(RTLD_NEXT) from interposed bodies during dyld/libSystem
+ * init: malloc_init → isatty → dlsym hangs in dyld4::Loader::hasExportedSymbol
+ * on watchOS Simulator (huge Mach-O trie walk).
+ *
+ * Also never trust dlsym(RTLD_NEXT) for these symbols after interpose is
+ * installed: on watch/iOS sim it can return the replacement itself, so
+ * wwn_real_read → wwn_read recurses until stack guard (seen in os_log_create).
+ * Use the interpose tuple's .replacee pointer (bound to the real libc symbol).
+ */
+static int (*wwn_real_isatty)(int);
+static int (*wwn_real_tcgetattr)(int, struct termios *);
+static int (*wwn_real_tcsetattr)(int, int, const struct termios *);
+static int (*wwn_real_ioctl)(int, unsigned long, ...);
+static ssize_t (*wwn_real_read)(int, void *, size_t);
+static ssize_t (*wwn_real_write)(int, const void *, size_t);
+static volatile int wwn_pty_interpose_resolved;
+
+static int wwn_isatty(int fd);
+static int wwn_tcgetattr(int fd, struct termios *termios_p);
+static int wwn_tcsetattr(int fd, int optional_actions,
+			 const struct termios *termios_p);
+static int wwn_ioctl(int fd, unsigned long request, ...);
+static ssize_t wwn_read(int fd, void *buf, size_t count);
+static ssize_t wwn_write(int fd, const void *buf, size_t count);
+
+typedef struct {
+	const void *replacement;
+	const void *replacee;
+} wwn_interpose_t;
+
+__attribute__((used)) static const wwn_interpose_t wwn_interpose_read
+    __attribute__((section("__DATA,__interpose"))) = {
+	.replacement = (const void *)(unsigned long)&wwn_read,
+	.replacee = (const void *)(unsigned long)&read,
+};
+
+__attribute__((used)) static const wwn_interpose_t wwn_interpose_write
+    __attribute__((section("__DATA,__interpose"))) = {
+	.replacement = (const void *)(unsigned long)&wwn_write,
+	.replacee = (const void *)(unsigned long)&write,
+};
+
+__attribute__((used)) static const wwn_interpose_t wwn_interpose_isatty
+    __attribute__((section("__DATA,__interpose"))) = {
+	.replacement = (const void *)(unsigned long)&wwn_isatty,
+	.replacee = (const void *)(unsigned long)&isatty,
+};
+
+__attribute__((used)) static const wwn_interpose_t wwn_interpose_tcgetattr
+    __attribute__((section("__DATA,__interpose"))) = {
+	.replacement = (const void *)(unsigned long)&wwn_tcgetattr,
+	.replacee = (const void *)(unsigned long)&tcgetattr,
+};
+
+__attribute__((used)) static const wwn_interpose_t wwn_interpose_tcsetattr
+    __attribute__((section("__DATA,__interpose"))) = {
+	.replacement = (const void *)(unsigned long)&wwn_tcsetattr,
+	.replacee = (const void *)(unsigned long)&tcsetattr,
+};
+
+__attribute__((used)) static const wwn_interpose_t wwn_interpose_ioctl
+    __attribute__((section("__DATA,__interpose"))) = {
+	.replacement = (const void *)(unsigned long)&wwn_ioctl,
+	.replacee = (const void *)(unsigned long)&ioctl,
+};
+
 __attribute__((constructor(101)))
 static void
 wwn_pty_early_init(void)
 {
 	app_log_fd_init();
+	/*
+	 * Bind real_* from interpose .replacee (never dlsym). Early interposed
+	 * calls before this runs must take the safe NULL fallback.
+	 */
+	wwn_real_isatty =
+	    (int (*)(int))(unsigned long)wwn_interpose_isatty.replacee;
+	wwn_real_tcgetattr = (int (*)(int, struct termios *))(
+	    unsigned long)wwn_interpose_tcgetattr.replacee;
+	wwn_real_tcsetattr = (int (*)(int, int, const struct termios *))(
+	    unsigned long)wwn_interpose_tcsetattr.replacee;
+	wwn_real_ioctl = (int (*)(int, unsigned long, ...))(
+	    unsigned long)wwn_interpose_ioctl.replacee;
+	wwn_real_read = (ssize_t (*)(int, void *, size_t))(
+	    unsigned long)wwn_interpose_read.replacee;
+	wwn_real_write = (ssize_t (*)(int, const void *, size_t))(
+	    unsigned long)wwn_interpose_write.replacee;
+	/* Refuse self-pointers if a platform ever aliases replacee→replacement. */
+	if ((const void *)(unsigned long)wwn_real_isatty ==
+	    wwn_interpose_isatty.replacement)
+		wwn_real_isatty = NULL;
+	if ((const void *)(unsigned long)wwn_real_read ==
+	    wwn_interpose_read.replacement)
+		wwn_real_read = NULL;
+	if ((const void *)(unsigned long)wwn_real_write ==
+	    wwn_interpose_write.replacement)
+		wwn_real_write = NULL;
+	if ((const void *)(unsigned long)wwn_real_tcgetattr ==
+	    wwn_interpose_tcgetattr.replacement)
+		wwn_real_tcgetattr = NULL;
+	if ((const void *)(unsigned long)wwn_real_tcsetattr ==
+	    wwn_interpose_tcsetattr.replacement)
+		wwn_real_tcsetattr = NULL;
+	if ((const void *)(unsigned long)wwn_real_ioctl ==
+	    wwn_interpose_ioctl.replacement)
+		wwn_real_ioctl = NULL;
+	wwn_pty_interpose_resolved = 1;
 }
 #endif
 
@@ -1318,23 +1423,14 @@ wwn_init_fake_termios(void)
 static ssize_t
 wwn_read(int fd, void *buf, size_t count)
 {
-	ssize_t (*real_read)(int, void *, size_t);
 	ssize_t n;
 
-	real_read = (ssize_t (*)(int, void *, size_t))dlsym(RTLD_NEXT, "read");
-	if (real_read == NULL) {
-		static int wwn_read_interpose_warned;
-
-		if (!wwn_read_interpose_warned) {
-			WWN_PTY_LOG("wwn_pty: dlsym(RTLD_NEXT, read) failed: %s\n",
-			        dlerror() != NULL ? dlerror() : "unknown");
-			wwn_read_interpose_warned = 1;
-		}
+	if (wwn_real_read == NULL) {
 		errno = ENOSYS;
 		return -1;
 	}
 
-	n = real_read(fd, buf, count);
+	n = wwn_real_read(fd, buf, count);
 	if (wwn_fake_tty_active() && ios_shell_io_active &&
 	    pthread_equal(pthread_self(), ios_shell_io_thread) && n > 0 &&
 	    (fd == STDIN_FILENO || fd == STDOUT_FILENO)) {
@@ -1349,10 +1445,10 @@ wwn_read(int fd, void *buf, size_t count)
 static ssize_t
 wwn_write(int fd, const void *buf, size_t count)
 {
-	ssize_t (*real_write)(int, const void *, size_t);
+	ssize_t (*real_write)(int, const void *, size_t) = wwn_real_write;
 	ssize_t ret;
 
-	real_write = (ssize_t (*)(int, const void *, size_t))dlsym(RTLD_NEXT, "write");
+	/* Never dlsym here — see wwn_pty_early_init (watchOS dyld / recursion). */
 	if (real_write == NULL) {
 		errno = ENOSYS;
 		return -1;
@@ -1402,11 +1498,9 @@ wwn_isatty(int fd)
 {
 	if (wwn_fake_tty_active() && wwn_is_stdio_fd(fd))
 		return 1;
-	{
-		int (*real)(int) = (int (*)(int))dlsym(RTLD_NEXT, "isatty");
-		if (real != NULL)
-			return real(fd);
-	}
+	/* Never dlsym here — see wwn_pty_early_init comment (watchOS dyld hang). */
+	if (wwn_real_isatty != NULL)
+		return wwn_real_isatty(fd);
 	errno = ENOTTY;
 	return 0;
 }
@@ -1419,12 +1513,8 @@ wwn_tcgetattr(int fd, struct termios *termios_p)
 		*termios_p = wwn_fake_termios;
 		return 0;
 	}
-	{
-		int (*real)(int, struct termios *) =
-			(int (*)(int, struct termios *))dlsym(RTLD_NEXT, "tcgetattr");
-		if (real != NULL)
-			return real(fd, termios_p);
-	}
+	if (wwn_real_tcgetattr != NULL)
+		return wwn_real_tcgetattr(fd, termios_p);
 	errno = ENOTTY;
 	return -1;
 }
@@ -1438,13 +1528,8 @@ wwn_tcsetattr(int fd, int optional_actions, const struct termios *termios_p)
 		wwn_fake_termios = *termios_p;
 		return 0;
 	}
-	{
-		int (*real)(int, int, const struct termios *) =
-			(int (*)(int, int, const struct termios *))dlsym(RTLD_NEXT,
-			                                                     "tcsetattr");
-		if (real != NULL)
-			return real(fd, optional_actions, termios_p);
-	}
+	if (wwn_real_tcsetattr != NULL)
+		return wwn_real_tcsetattr(fd, optional_actions, termios_p);
 	errno = ENOTTY;
 	return -1;
 }
@@ -1460,11 +1545,8 @@ wwn_ioctl(int fd, unsigned long request, ...)
 	va_end(ap);
 
 	if (request == FIONREAD && arg != NULL) {
-		int (*real)(int, unsigned long, ...);
-
-		real = (int (*)(int, unsigned long, ...))dlsym(RTLD_NEXT, "ioctl");
-		if (real != NULL)
-			return real(fd, request, arg);
+		if (wwn_real_ioctl != NULL)
+			return wwn_real_ioctl(fd, request, arg);
 	}
 
 	if (wwn_fake_tty_active() && wwn_is_stdio_fd(fd)) {
@@ -1490,54 +1572,9 @@ wwn_ioctl(int fd, unsigned long request, ...)
 #endif
 	}
 
-	{
-		int (*real)(int, unsigned long, ...);
-		real = (int (*)(int, unsigned long, ...))dlsym(RTLD_NEXT, "ioctl");
-		if (real != NULL)
-			return real(fd, request, arg);
-	}
+	if (wwn_real_ioctl != NULL)
+		return wwn_real_ioctl(fd, request, arg);
 	errno = ENOTTY;
 	return -1;
 }
-
-typedef struct {
-	const void *replacement;
-	const void *replacee;
-} wwn_interpose_t;
-
-__attribute__((used)) static const wwn_interpose_t wwn_interpose_read
-    __attribute__((section("__DATA,__interpose"))) = {
-	.replacement = (const void *)(unsigned long)&wwn_read,
-	.replacee = (const void *)(unsigned long)&read,
-};
-
-__attribute__((used)) static const wwn_interpose_t wwn_interpose_write
-    __attribute__((section("__DATA,__interpose"))) = {
-	.replacement = (const void *)(unsigned long)&wwn_write,
-	.replacee = (const void *)(unsigned long)&write,
-};
-
-__attribute__((used)) static const wwn_interpose_t wwn_interpose_isatty
-    __attribute__((section("__DATA,__interpose"))) = {
-	.replacement = (const void *)(unsigned long)&wwn_isatty,
-	.replacee = (const void *)(unsigned long)&isatty,
-};
-
-__attribute__((used)) static const wwn_interpose_t wwn_interpose_tcgetattr
-    __attribute__((section("__DATA,__interpose"))) = {
-	.replacement = (const void *)(unsigned long)&wwn_tcgetattr,
-	.replacee = (const void *)(unsigned long)&tcgetattr,
-};
-
-__attribute__((used)) static const wwn_interpose_t wwn_interpose_tcsetattr
-    __attribute__((section("__DATA,__interpose"))) = {
-	.replacement = (const void *)(unsigned long)&wwn_tcsetattr,
-	.replacee = (const void *)(unsigned long)&tcsetattr,
-};
-
-__attribute__((used)) static const wwn_interpose_t wwn_interpose_ioctl
-    __attribute__((section("__DATA,__interpose"))) = {
-	.replacement = (const void *)(unsigned long)&wwn_ioctl,
-	.replacee = (const void *)(unsigned long)&ioctl,
-};
 #endif /* Apple mobile */
