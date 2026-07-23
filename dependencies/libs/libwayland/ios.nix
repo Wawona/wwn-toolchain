@@ -330,6 +330,10 @@ pkgs.stdenv.mkDerivation {
     # cursor public header (install_headers() upstream puts it in $includedir root).
     if [ -f cursor/wayland-cursor.h ]; then
       cp cursor/wayland-cursor.h $out/include/
+      # Client consumers conventionally receive $includedir/wayland from
+      # wayland-client.pc. Keep the cursor header available there too so a
+      # wayland-client dependency is sufficient for foot and similar clients.
+      cp cursor/wayland-cursor.h $out/include/wayland/
     fi
 
     # Install public headers.

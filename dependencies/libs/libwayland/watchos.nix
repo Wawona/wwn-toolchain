@@ -213,6 +213,12 @@ EOF
       [ -f "$f" ] && cp "$f" $out/lib/
     done
     for h in src/*.h; do [ -f "$h" ] && cp "$h" $out/include/wayland/; done
+    # wayland-client.pc advertises include/wayland; export the cursor public
+    # header there as well so clients such as foot can include it through the
+    # client dependency on constrained watchOS builds.
+    if [ -f cursor/wayland-cursor.h ]; then
+      cp cursor/wayland-cursor.h $out/include/wayland/
+    fi
     [ -f build/src/wayland-version.h ]          && cp build/src/wayland-version.h $out/include/wayland/
     [ -f build/src/wayland-client-protocol.h ]  && cp build/src/wayland-client-protocol.h $out/include/wayland/
     [ -f build/src/wayland-server-protocol.h ]  && cp build/src/wayland-server-protocol.h $out/include/wayland/
