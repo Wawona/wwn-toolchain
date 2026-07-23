@@ -18,7 +18,9 @@ let
     else if isTVOS then "17.0"
     else iosToolchain.deploymentTarget;
   cmakeSystemName =
-    if isVisionOS || isTVOS then "Darwin" else "iOS";
+    if isVisionOS then "visionOS"
+    else if isTVOS then "tvOS"
+    else "iOS";
   epollShimSource = import ./source-pins.nix;
   src = fetchSource epollShimSource;
 in

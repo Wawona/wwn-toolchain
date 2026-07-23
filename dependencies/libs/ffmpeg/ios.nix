@@ -20,9 +20,9 @@ let
     sha256 = "sha256-FdKhhCveEo5UodEoyUh3aBHABv3OT2VXmwBXE1ce3p0=";
   };
   src = fetchSource ffmpegSource;
-  # watchOS lacks full VideoToolbox / SecureTransport coverage for foot decode.
+  # watchOS / visionOS lack full VideoToolbox coverage for bundled decode.
   disableSecureTransport = mobile.isWatchOS;
-  enableVideoToolbox = !mobile.isWatchOS;
+  enableVideoToolbox = !(mobile.isWatchOS || mobile.isVisionOS);
 in
 pkgs.stdenv.mkDerivation {
   name = "ffmpeg-ios";

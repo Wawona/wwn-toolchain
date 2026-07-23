@@ -213,6 +213,9 @@ EOF
       [ -f "$f" ] && cp "$f" $out/lib/
     done
     for h in src/*.h; do [ -f "$h" ] && cp "$h" $out/include/wayland/; done
+    if [ -f cursor/wayland-cursor.h ]; then
+      cp cursor/wayland-cursor.h $out/include/
+    fi
     [ -f build/src/wayland-version.h ]          && cp build/src/wayland-version.h $out/include/wayland/
     [ -f build/src/wayland-client-protocol.h ]  && cp build/src/wayland-client-protocol.h $out/include/wayland/
     [ -f build/src/wayland-server-protocol.h ]  && cp build/src/wayland-server-protocol.h $out/include/wayland/
@@ -228,7 +231,7 @@ includedir=\''${prefix}/include/wayland
 Name: Wayland Client
 Description: Wayland client side library (watchOS cross-compiled)
 Version: 1.25.0
-Cflags: -I\''${includedir}
+Cflags: -I\''${prefix}/include -I\''${includedir}
 Libs: -L\''${libdir} -lwayland-client
 Libs.private: -lepoll-shim
 EOF
@@ -242,7 +245,7 @@ includedir=\''${prefix}/include/wayland
 Name: Wayland Server
 Description: Wayland server side library (watchOS cross-compiled)
 Version: 1.25.0
-Cflags: -I\''${includedir}
+Cflags: -I\''${prefix}/include -I\''${includedir}
 Libs: -L\''${libdir} -lwayland-server
 Libs.private: -lepoll-shim
 EOF
@@ -256,7 +259,7 @@ includedir=\''${prefix}/include/wayland
 Name: Wayland Cursor
 Description: Wayland cursor library (watchOS cross-compiled)
 Version: 1.25.0
-Cflags: -I\''${includedir}
+Cflags: -I\''${prefix}/include -I\''${includedir}
 Libs: -L\''${libdir} -lwayland-cursor
 EOF
     fi

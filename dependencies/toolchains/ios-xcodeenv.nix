@@ -94,10 +94,10 @@ let
           "arm64-apple-ios${minVersion}";
       deploymentFlag =
         if platform == "visionos" then
-          if simulator then
-            "-mvisionos-simulator-version-min=${minVersion}"
-          else
-            "-mvisionos-version-min=${minVersion}"
+          # `-target arm64-apple-xros${minVersion}(-simulator)?` already pins the OS;
+          # Apple's clang rejects `-mvisionos(-simulator)?-version-min=*` together
+          # with that explicit triple (unknown argument).
+          ""
         else if platform == "tvos" then
           if simulator then
             "-mtvos-simulator-version-min=${minVersion}"

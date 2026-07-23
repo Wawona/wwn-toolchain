@@ -30,6 +30,7 @@ pkgs.stdenv.mkDerivation {
 
   preConfigure = ''
     ${iosToolchain.mkIOSBuildEnv { inherit simulator; minVersion = mobile.minVersion; }}
+    unset MACOSX_DEPLOYMENT_TARGET IPHONEOS_DEPLOYMENT_TARGET
     export NIX_CFLAGS_COMPILE=""
     export NIX_LDFLAGS=""
     ${cmakeToolchain { inherit iosToolchain simulator; }}

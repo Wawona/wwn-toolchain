@@ -49,8 +49,14 @@ let
     if isVisionOS && simulator then "arm64-apple-xros${minVersion}-simulator"
     else if isVisionOS then "arm64-apple-xros${minVersion}"
     else null;
+  # Use CMake's real Apple platform names. "Darwin" makes Darwin-Initialize.cmake
+  # seed CMAKE_OSX_DEPLOYMENT_TARGET from $MACOSX_DEPLOYMENT_TARGET (often 14.0),
+  # which then becomes `--target=arm64-apple-xros14.0` — rejected by Apple clang.
   cmakeSystemName =
-    if isWatchOS || isVisionOS || isTVOS then "Darwin" else "iOS";
+    if isWatchOS then "watchOS"
+    else if isVisionOS then "visionOS"
+    else if isTVOS then "tvOS"
+    else "iOS";
   mesonSubsystem =
     if isWatchOS then "watchos"
     else if isTVOS then "tvos"

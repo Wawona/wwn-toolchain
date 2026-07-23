@@ -11,9 +11,9 @@
 let
   xcodeUtils = iosToolchain;
   platformInfo = import ../../toolchains/apple-mobile-platform.nix;
+  cmakeToolchain = import ../../toolchains/apple-cmake-toolchain.nix;
   mobile = platformInfo { inherit iosToolchain simulator; };
   mobileMinVersion = mobile.minVersion;
-  cmakeSystemName = mobile.cmakeSystemName;
   # zstd source - fetch from GitHub
   src = pkgs.fetchFromGitHub {
     owner = "facebook";
@@ -40,24 +40,7 @@ pkgs.stdenv.mkDerivation {
     export NIX_CFLAGS_COMPILE=""
     export NIX_CXXFLAGS_COMPILE=""
     export NIX_LDFLAGS=""
-    cat > ios-toolchain.cmake <<EOF
-    set(CMAKE_SYSTEM_NAME ${cmakeSystemName})
-    set(CMAKE_OSX_ARCHITECTURES $IOS_ARCH)
-    set(CMAKE_C_COMPILER "$XCODE_CLANG")
-    set(CMAKE_CXX_COMPILER "$XCODE_CLANGXX")
-    set(CMAKE_C_COMPILER_TARGET "$APPLE_LINKER_TARGET")
-    set(CMAKE_CXX_COMPILER_TARGET "$APPLE_LINKER_TARGET")
-    set(CMAKE_SYSROOT "$SDKROOT")
-    set(CMAKE_OSX_SYSROOT "$SDKROOT")
-    set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
-    set(CMAKE_C_FLAGS "-arch $IOS_ARCH -target $APPLE_LINKER_TARGET -isysroot $SDKROOT $APPLE_DEPLOYMENT_FLAG")
-    set(CMAKE_CXX_FLAGS "-arch $IOS_ARCH -target $APPLE_LINKER_TARGET -isysroot $SDKROOT $APPLE_DEPLOYMENT_FLAG")
-    set(CMAKE_ASM_FLAGS "-arch $IOS_ARCH -target $APPLE_LINKER_TARGET -isysroot $SDKROOT $APPLE_DEPLOYMENT_FLAG")
-    set(CMAKE_EXE_LINKER_FLAGS "-arch $IOS_ARCH -target $APPLE_LINKER_TARGET -isysroot $SDKROOT $APPLE_DEPLOYMENT_FLAG")
-    set(CMAKE_SHARED_LINKER_FLAGS "-arch $IOS_ARCH -target $APPLE_LINKER_TARGET -isysroot $SDKROOT $APPLE_DEPLOYMENT_FLAG")
-    set(BUILD_SHARED_LIBS OFF)
-    EOF
-
+    ${cmakeToolchain { inherit iosToolchain simulator; }}
     unset SDKROOT
   '';
 
