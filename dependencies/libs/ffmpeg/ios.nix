@@ -38,6 +38,19 @@ pkgs.stdenv.mkDerivation {
 
   buildInputs = [ ];
 
+  postPatch = ''
+    # FFmpeg's VideoToolbox path requests an OpenGL ES-compatible pixel buffer
+    # unconditionally. visionOS exposes VideoToolbox but explicitly forbids
+    # that legacy OpenGLES key, so retain VideoToolbox and omit only the
+    # unavailable compatibility hint.
+    substituteInPlace libavcodec/videotoolbox.c \
+      --replace-fail \
+        'CFDictionarySetValue(buffer_attributes, kCVPixelBufferOpenGLESCompatibilityKey, kCFBooleanTrue);' \
+        '#if !TARGET_OS_VISION
+    CFDictionarySetValue(buffer_attributes, kCVPixelBufferOpenGLESCompatibilityKey, kCFBooleanTrue);
+#endif'
+  '';
+
   preConfigure = ''
     ${iosToolchain.mkIOSBuildEnv { inherit simulator; minVersion = mobile.minVersion; }}
     unset MACOSX_DEPLOYMENT_TARGET IPHONEOS_DEPLOYMENT_TARGET
@@ -65,6 +78,9 @@ pkgs.stdenv.mkDerivation {
     export LDFLAGS="-arch arm64 -isysroot $SDKROOT ${mobile.minVerFlag}"
   '';
 
+  # FFmpeg enables VideoToolbox by default on Darwin. visionOS headers mark
+  # the OpenGLES pixel-buffer compatibility key unavailable, so visionOS must
+  # explicitly pass --disable-videotoolbox rather than omit its enable flags.
   configurePhase = ''
     runHook preConfigure
     unset SDKROOT
@@ -99,13 +115,10 @@ pkgs.stdenv.mkDerivation {
       --disable-indevs \
       --disable-outdevs \
       ${lib.optionalString disableSecureTransport "--disable-securetransport"} \
-      ${lib.optionalString enableVideoToolbox ''
-      --enable-videotoolbox \
-      --enable-hwaccel=h264_videotoolbox \
-      --enable-hwaccel=hevc_videotoolbox \
-      --enable-encoder=h264_videotoolbox \
-      --enable-encoder=hevc_videotoolbox \
-      ''} \
+      ${if enableVideoToolbox then
+        "--enable-videotoolbox --enable-hwaccel=h264_videotoolbox --enable-hwaccel=hevc_videotoolbox --enable-encoder=h264_videotoolbox --enable-encoder=hevc_videotoolbox"
+      else
+        "--disable-videotoolbox"} \
       --enable-encoder=libx264 \
       --enable-decoder=h264 \
       --enable-decoder=hevc
