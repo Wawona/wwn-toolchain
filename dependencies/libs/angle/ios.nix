@@ -1,4 +1,4 @@
-# ANGLE for iOS — static .a archives (Metal backend, App Store–safe).
+# ANGLE for Apple mobile — static .a archives (Metal backend, App Store–safe).
 # Prebuilt (default): XCSoar static libs force-loaded into the app binary
 # (ILAND_ANGLE_STATIC — no dlopen, no Frameworks/libEGL.dylib).
 # GN cross-build (usePrebuilt=false) is the from-source fallback.
@@ -13,7 +13,27 @@
   usePrebuilt ? true,
 }:
 
-if usePrebuilt && simulator then
+let
+  isVisionOS = iosToolchain.isVisionOSToolchain or false;
+  sdkPlatform =
+    if isVisionOS then
+      if simulator then "XRSimulator" else "XROS"
+    else if simulator then "iPhoneSimulator" else "iPhoneOS";
+  minFlag =
+    if isVisionOS then
+      # xrOS deployment is encoded in the clang target triple; unlike iOS,
+      # Apple clang has no -mvisionos[-simulator]-version-min spelling.
+      ""
+    else if simulator then
+      "-mios-simulator-version-min=${iosToolchain.deploymentTarget}"
+    else
+      "-miphoneos-version-min=${iosToolchain.deploymentTarget}";
+  packageSuffix =
+    if isVisionOS then
+      if simulator then "visionos-simulator" else "visionos"
+    else if simulator then "ios-simulator" else "ios";
+in
+if usePrebuilt && !isVisionOS && simulator then
   let
     sources = import ./prebuilt-sources.nix { inherit lib pkgs; };
     deviceHeaders = pkgs.fetchurl {
@@ -56,7 +76,7 @@ if usePrebuilt && simulator then
       platforms = platforms.darwin;
     };
   }
-else if usePrebuilt && !simulator then
+else if usePrebuilt && !isVisionOS && !simulator then
   let
     sources = import ./prebuilt-sources.nix { inherit lib pkgs; };
     deviceHeaders = pkgs.fetchurl {
@@ -105,21 +125,21 @@ else if usePrebuilt && !simulator then
 else
   let
     xcodeUtils = import ../../utils/xcode-wrapper.nix { inherit lib pkgs; };
-    sdkPlatform = if simulator then "iPhoneSimulator" else "iPhoneOS";
-    minFlag =
-      if simulator then
-        "-mios-simulator-version-min=${iosToolchain.deploymentTarget}"
-      else
-        "-miphoneos-version-min=${iosToolchain.deploymentTarget}";
   in
   import ./cross-base.nix {
     inherit lib pkgs buildPackages;
-    pname = if simulator then "angle-ios-simulator" else "angle-ios";
+    pname = "angle-${packageSuffix}";
+    clangBasePath = if isVisionOS then "xcode-clang" else null;
 
     gnExtraFlags = [
       "target_os=\"ios\""
       "target_cpu=\"arm64\""
       "target_environment=\"${if simulator then "simulator" else "device"}\""
+    ] ++ lib.optionals isVisionOS [
+      # Retain Chromium's supported iPhone platform branches and override only
+      # the selected SDK below; target_os has no native visionOS value yet.
+      "angle_visionos=true"
+    ] ++ [
       "angle_enable_metal=true"
       "angle_enable_vulkan=false"
       "ios_deployment_target=\"${iosToolchain.deploymentTarget}\""
@@ -141,6 +161,16 @@ else
       export CFLAGS="-arch arm64 -isysroot $SDKROOT ${minFlag}"
       export CXXFLAGS="$CFLAGS"
       export LDFLAGS="-arch arm64 -isysroot $SDKROOT ${minFlag}"
+      ${lib.optionalString isVisionOS ''
+        rm -rf xcode-clang
+        ln -s "$DEVELOPER_DIR/Toolchains/XcodeDefault.xctoolchain/usr" xcode-clang
+        python3 -c 'from pathlib import Path; import re; p = Path("build/config/apple/mobile_config.gni"); s = p.read_text(); p.write_text(s if "\"xros\"" in s else re.sub(r"(?m)^(\s*)\"tvos\",\s*$", "\\1\"tvos\",\n\\1\"xros\",", s, count=1))'
+        python3 -c 'from pathlib import Path; p = Path("build/config/ios/ios_sdk.gni"); s = p.read_text(); p.write_text(s.replace("declare_args() {", "declare_args() {\n  angle_visionos = false", 1))'
+        python3 -c 'from pathlib import Path; p = Path("build/config/ios/ios_sdk.gni"); s = p.read_text(); m = "if (target_platform == \"iphoneos\") {"; r = """if (angle_visionos) {\n  if (target_environment == \"simulator\") {\n    ios_sdk_name = \"xrsimulator\"\n    ios_sdk_platform = \"XRSimulator\"\n  } else if (target_environment == \"device\") {\n    ios_sdk_name = \"xros\"\n    ios_sdk_platform = \"XROS\"\n  } else {\n    assert(false, \"unsupported target_environment=$target_environment\")\n  }\n} else if (target_platform == \"iphoneos\") {"""; p.write_text(s.replace(m, r, 1))'
+        python3 -c 'from pathlib import Path; p = Path("build/config/rust.gni"); s = p.read_text(); m = "} else if (target_platform == \"tvos\") {"; r = """} else if (target_platform == \"xros\") {\n  if (target_environment == \"simulator\") {\n    rust_abi_target = \"aarch64-apple-visionos-sim\"\n  } else if (target_environment == \"device\") {\n    rust_abi_target = \"aarch64-apple-visionos\"\n  } else {\n    assert(false, \"unsupported target_environment=$target_environment\")\n  }\n} else if (target_platform == \"tvos\") {"""; p.write_text(s if "target_platform == \"xros\"" in s else s.replace(m, r, 1))'
+        python3 -c 'from pathlib import Path; p = Path("build/config/apple/sdk_info.py"); s = p.read_text(); q = chr(39); p.write_text(s if "xrsimulator" in s else s.replace("watchsimulator", "watchsimulator" + q + ",\n        " + q + "xros" + q + ",\n        " + q + "xrsimulator", 1))'
+        python3 -c 'from pathlib import Path; p = Path("build/config/ios/BUILD.gn"); s = p.read_text(); p.write_text(s.replace("apple-ios", "apple-xros"))'
+      ''}
     '';
 
     installHook = ''

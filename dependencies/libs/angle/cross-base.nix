@@ -6,6 +6,7 @@
   buildPackages,
   pname,
   gnExtraFlags,
+  clangBasePath ? null,
   preConfigureHook ? "",
   installHook ? "",
   nativeBuildInputsExtra ? [ ],
@@ -34,6 +35,13 @@ let
         $out/lib/clang/${llvmMajorVersion}/lib/darwin/libclang_rt.osx.a
       ln -s $out/resource-root/lib/darwin/libclang_rt.osx.a \
         $out/lib/clang/${llvmMajorVersion}/lib/darwin/libclang_rt.osx-${hostArch}.a
+      # ANGLE's Apple GN toolchain asks the bundled LLVM resource directory for
+      # this archive when target_os="ios". Nix LLVM only publishes the Darwin
+      # runtime spelling; the archive itself is architecture-generic here.
+      ln -s $out/resource-root/lib/darwin/libclang_rt.osx.a \
+        $out/lib/clang/${llvmMajorVersion}/lib/darwin/libclang_rt.ios.a
+      ln -s $out/resource-root/lib/darwin/libclang_rt.osx.a \
+        $out/lib/clang/${llvmMajorVersion}/lib/darwin/libclang_rt.ios-${hostArch}.a
     '';
   };
 
@@ -69,7 +77,7 @@ pkgs.stdenv.mkDerivation (finalAttrs: {
   gnFlags = [
     "is_debug=false"
     "use_sysroot=false"
-    "clang_base_path=\"${clang}\""
+    "clang_base_path=\"${if clangBasePath != null then clangBasePath else clang}\""
     "angle_build_tests=false"
     "concurrent_links=1"
     "use_custom_libcxx=true"
@@ -121,7 +129,9 @@ pkgs.stdenv.mkDerivation (finalAttrs: {
 
   buildPhase = ''
     runHook preBuild
-    ninja -C out angle angle_util angle_common libEGL libGLESv2
+    # Chromium's current ANGLE graph no longer exposes an `angle_util` target.
+    # The EGL/GLES libraries bring in the required utility objects themselves.
+    ninja -C out angle angle_common libEGL libGLESv2
     runHook postBuild
   '';
 
