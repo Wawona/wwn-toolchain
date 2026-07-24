@@ -93,17 +93,6 @@ in
         inherit androidToolchain;
         buildModule = buildModule;
       }
-    else if name == "swiftshader" then
-      (import ../libs/swiftshader/android.nix) {
-        inherit
-          lib
-          pkgs
-          buildPackages
-          common
-          ;
-        inherit androidToolchain;
-        buildModule = buildModule;
-      }
     else if name == "zstd" then
       (import ../libs/zstd/android.nix) {
         inherit

@@ -55,12 +55,6 @@ in
     watchos = ../../libs/libxml2/watchos.nix;
     macos = ../../libs/libxml2/macos.nix;
   };
-  swiftshader = withPlatformVariants {
-    android = ../../libs/swiftshader/android.nix;
-    wearos = ../../libs/swiftshader/wearos.nix;
-    ios = null;
-    macos = null;
-  };
   zlib = withPlatformVariants {
     android = null;
     ios = ../../libs/zlib/ios.nix;
@@ -276,17 +270,6 @@ in
     visionos = ../../libs/utf8proc/ios.nix;
     watchos = ../../libs/utf8proc/ios.nix;
     macos = ../../libs/utf8proc/macos.nix;
-  };
-  # ANGLE: OpenGL ES (GLES2/3) over Metal. macOS uses nixpkgs#angle (cached).
-  # iOS/Android cross-compiled via GN (see dependencies/libs/angle/).
-  angle = withPlatformVariants {
-    android = ../../libs/angle/android.nix;
-    ios = ../../libs/angle/ios.nix;
-    ipados = ../../libs/angle/ios.nix;
-    tvos = ../../libs/angle/ios.nix;
-    visionos = ../../libs/angle/ios.nix;
-    watchos = ../../libs/angle/ios.nix;
-    macos = ../../libs/angle/macos.nix;
   };
   # In-process zsh stack: the iOS recipes are platform-agnostic (they resolve the
   # SDK/min-version from iosToolchain via apple-mobile-platform.nix), so the whole
