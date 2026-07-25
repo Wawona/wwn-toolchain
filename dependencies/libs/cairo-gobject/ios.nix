@@ -14,7 +14,9 @@
 }:
 
 let
-  xcodeUtils = import ../../../utils/xcode-wrapper.nix { inherit lib pkgs; };
+  # buildForVisionOS supplies a vision-aware iosToolchain wrapper; importing
+  # the generic iOS helper here silently emitted iOS objects into xros builds.
+  xcodeUtils = iosToolchain;
   src = pkgs.cairo.src;
   version = pkgs.cairo.version;
   cairo = buildModule.buildForIOS "cairo" { inherit simulator; };

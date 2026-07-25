@@ -8,7 +8,23 @@ It provides the Apple-platform (iOS, iPadOS, tvOS, watchOS, visionOS, macOS),
 Android/Wear OS, and Linux cross builders plus the pristine cross-compiled
 libraries those ports depend on (cairo, pango, fontconfig, freetype, harfbuzz,
 fribidi, glib, pixman, libwayland, xkbcommon, epoll-shim, openssl, mbedtls,
-ffmpeg, ANGLE, ...) and the first-party `wawona-pty`.
+ffmpeg, ...) and the first-party `wawona-pty`. Graphics translators and ICDs
+such as ANGLE and SwiftShader belong to `wwn-iland`, not this substrate.
+
+## Layer identity (L0) — acyclic DAG
+
+```text
+L0 wwn-toolchain (this repo, substrate) → depends on NO wwn-* repo
+   ▲
+L1 wwn-iland (graphics stack) → L2 wwn-kmscube → L3 wwn-weston → L4 Wawona
+```
+
+This repo is the **base** of the Wawona org DAG: everything depends on it, it
+depends on no `wwn-*` repo. Never add a `wwn-*` flake input here, and never put
+graphics-stack keys (iland/weston/kmscube; ANGLE/SwiftShader/Vulkan ICDs) into
+`baseRegistry` — those belong to `wwn-iland` (L1). `pixman` stays here because
+cairo depends on it. ANGLE/SwiftShader recipes have moved to `wwn-iland`;
+do not restore them here. Canonical: `Wawona/docs/wwn-repo-dag.md`.
 
 ## Use
 
