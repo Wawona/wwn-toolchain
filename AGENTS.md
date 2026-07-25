@@ -40,4 +40,7 @@ Canonical: `Wawona/docs/wwn-repo-dag.md` + workspace rule `wawona-repo-dag`.
 - **Do** keep this repo free of GLES/Vulkan present-stack code.
 - **Do** expose new substrate libs through `baseRegistry` for all consumers.
 - **Don't** import any app/graphics fragment back into `baseRegistry`.
-- **Don't** add `wwn-*` flake inputs — the base layer has none.
+- **Don't** add `wwn-*` flake inputs — the base layer has none. In particular,
+  **never add `wwn-iland` as an input**: this repo is L0 and iland is L1, so
+  that edge inverts the DAG and every consumer inherits the cycle. If a recipe
+  here seems to need iland, the recipe belongs in iland.
