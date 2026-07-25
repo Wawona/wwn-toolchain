@@ -283,4 +283,8 @@ in
     watchos = ../../libs/wawona-pty/ios.nix;
     macos = null;
   };
+  # Fail loudly when a consumer forgets to merge wwn-iland's L1 fragment.
+  # These are ownership sentinels only; L0 never imports graphics recipes.
+  angle = throw "angle moved to wwn-iland.registryFragment (L1)";
+  swiftshader = throw "swiftshader moved to wwn-iland.registryFragment (L1)";
 }
