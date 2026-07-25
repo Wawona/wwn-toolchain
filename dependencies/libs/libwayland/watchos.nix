@@ -213,6 +213,9 @@ EOF
       [ -f "$f" ] && cp "$f" $out/lib/
     done
     for h in src/*.h; do [ -f "$h" ] && cp "$h" $out/include/wayland/; done
+    for h in egl/wayland-egl.h egl/wayland-egl-core.h egl/wayland-egl-backend.h; do
+      [ -f "$h" ] && cp "$h" $out/include/
+    done
     # wayland-client.pc advertises include/wayland; export the cursor public
     # header there as well so clients such as foot can include it through the
     # client dependency on constrained watchOS builds.
@@ -251,6 +254,20 @@ Version: 1.25.0
 Cflags: -I\''${includedir}
 Libs: -L\''${libdir} -lwayland-server
 Libs.private: -lepoll-shim
+EOF
+    fi
+    if [ ! -f "$out/lib/pkgconfig/wayland-egl.pc" ]; then
+      cat > $out/lib/pkgconfig/wayland-egl.pc <<EOF
+prefix=$out
+exec_prefix=\''${prefix}
+libdir=\''${exec_prefix}/lib
+includedir=\''${prefix}/include
+Name: Wayland EGL
+Description: Wayland EGL windowing (watchOS cross-compiled)
+Version: 1.25.0
+Requires: wayland-client
+Cflags: -I\''${includedir}
+Libs: -L\''${libdir} -lwayland-egl -lwayland-client
 EOF
     fi
     if [ ! -f "$out/lib/pkgconfig/wayland-cursor.pc" ]; then
