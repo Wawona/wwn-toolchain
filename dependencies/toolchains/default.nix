@@ -119,7 +119,8 @@ let
       androidScript = if registryEntry != null then registryEntry.android or null else null;
     in
     if androidScript != null then
-      callPackageFiltered androidScript androidArgs
+      # Forward per-call entry (enableGlClients, etc.) — same as iOS/tvOS/…
+      callPackageFiltered androidScript (androidArgs // entry)
     else
       # Fallback for platforms/android.nix (which might handle other names)
       (import ../platforms/android.nix {
