@@ -20,7 +20,16 @@ let
   mesonSetup = import ../../toolchains/apple-mobile-meson.nix {
     inherit lib buildPackages xcodeUtils iosToolchain simulator;
   };
-  src = pkgs.fontconfig.src;
+  # Pin fontconfig to 2.17.1: fontconfig 2.18.0 raised its meson.build floor to
+  # `meson_version : '>= 1.11.0'`, but nixpkgs (and hence this toolchain's
+  # buildPackages.meson) is still 1.10.2. nixpkgs sidesteps the skew by building
+  # fontconfig with autotools; our cross build uses meson, so hold at the last
+  # 2.17.x (its meson floor is >= 1.6.1, satisfied by 1.10.2).
+  fontconfigVersion = "2.17.1";
+  src = pkgs.fetchurl {
+    url = "https://gitlab.freedesktop.org/api/v4/projects/890/packages/generic/fontconfig/${fontconfigVersion}/fontconfig-${fontconfigVersion}.tar.xz";
+    hash = "sha256-n1yuk/T//B+8Ba6ZzfxwjNYN/WYS/8BRKCcCXAJvpUE=";
+  };
   freetype = buildModule.buildForIOS "freetype" { inherit simulator; };
   expat = buildModule.buildForIOS "expat" { inherit simulator; };
   buildFlags = [
