@@ -278,12 +278,6 @@ open_pipe_fallback(int *master_fd, int *slave_fd, int pty_err)
 	return 0;
 }
 
-static int
-pty_failure_may_fallback(int err)
-{
-	return err == EPERM || err == EACCES || err == ENODEV ||
-	       err == ENOTSUP || err == ENXIO;
-}
 #endif
 
 static int
@@ -345,6 +339,12 @@ wwn_pty_open(int *master_fd, int *slave_fd, const struct winsize *ws)
 	 * stdout cannot share one fd (ZLE breaks), and the iOS soft keyboard must
 	 * inject into the input pipe — never into the display master (writes there
 	 * are read back by weston-terminal as faux shell output).
+	 *
+	 * Prefer that path whenever WAWONA_ZSH_IN_PROCESS is set. Otherwise try
+	 * POSIX PTY, then fall back for any failure — iOS errno for
+	 * posix_openpt is not always in the classic EPERM/ENODEV set, and a
+	 * hard fail here used to make weston-terminal call exit() and take down
+	 * the whole host process.
 	 */
 	if (getenv("WAWONA_ZSH_IN_PROCESS") != NULL) {
 		if (open_pipe_fallback(master_fd, slave_fd, ENOTTY) == 0)
@@ -357,10 +357,8 @@ wwn_pty_open(int *master_fd, int *slave_fd, const struct winsize *ws)
 		return 0;
 
 	err = errno;
-	if (pty_failure_may_fallback(err)) {
-		if (open_pipe_fallback(master_fd, slave_fd, err) == 0)
-			return 0;
-	}
+	if (open_pipe_fallback(master_fd, slave_fd, err) == 0)
+		return 0;
 
 	errno = err;
 	return -1;
