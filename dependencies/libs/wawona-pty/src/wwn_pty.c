@@ -383,7 +383,7 @@ static __thread jmp_buf wwn_zsh_exit_jmp;
 static __thread int wwn_zsh_exit_armed;
 static __thread int wwn_zsh_soft_exit_code;
 
-void
+__attribute__((__noreturn__)) void
 wwn_zsh_soft_exit(int status)
 {
 	WWN_PTY_LOG("wwn_pty: soft-exit from in-process zsh status=%d (host stays up)\n",
