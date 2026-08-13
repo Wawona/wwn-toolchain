@@ -7,7 +7,9 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <setjmp.h>
 #include <spawn.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -372,6 +374,28 @@ wwn_pty_open(int *master_fd, int *slave_fd, const struct winsize *ws)
 }
 
 #if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
+/*
+ * zsh's exit()/zexit must return control to ios_zsh_thread instead of
+ * terminating the Wawona process (nested Weston was mid-pixman when zsh
+ * failed keymap load and called exit → host SIGSEGV).
+ */
+static __thread jmp_buf wwn_zsh_exit_jmp;
+static __thread int wwn_zsh_exit_armed;
+static __thread int wwn_zsh_soft_exit_code;
+
+void
+wwn_zsh_soft_exit(int status)
+{
+	WWN_PTY_LOG("wwn_pty: soft-exit from in-process zsh status=%d (host stays up)\n",
+	            status);
+	if (wwn_zsh_exit_armed) {
+		wwn_zsh_soft_exit_code = status;
+		longjmp(wwn_zsh_exit_jmp, 1);
+	}
+	/* Called outside a shell session — still must not kill the host. */
+	pthread_exit((void *)(intptr_t)status);
+}
+
 struct wwn_ios_shell_job {
 	pid_t fake_pid;
 	pthread_t thread;
@@ -723,7 +747,13 @@ ios_zsh_thread(void *arg)
 		WWN_PTY_LOG(
 		        "wwn_pty: starting in-process zsh wawona_zsh_main argc=%d argv0=%s\n",
 		        argc, (argc > 0 && job->argv[0]) ? job->argv[0] : "(none)");
-		job->exit_code = wawona_zsh_main(argc, job->argv);
+		wwn_zsh_exit_armed = 1;
+		wwn_zsh_soft_exit_code = 0;
+		if (setjmp(wwn_zsh_exit_jmp) == 0)
+			job->exit_code = wawona_zsh_main(argc, job->argv);
+		else
+			job->exit_code = wwn_zsh_soft_exit_code;
+		wwn_zsh_exit_armed = 0;
 		WWN_PTY_LOG("wwn_pty: zsh exited with status %d\n", job->exit_code);
 	}
 

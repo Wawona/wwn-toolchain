@@ -26,6 +26,8 @@ void wwn_pty_ios_kick_shell_display(void);
 void wwn_pty_ios_shell_init_done(void);
 void wwn_pty_ios_note_init_io(void);
 int wwn_pty_ios_waitpid(pid_t fake_pid, int *exit_status, int flags);
+/* Redirect target for zsh's exit()/_exit (force-include); must not kill host. */
+void wwn_zsh_soft_exit(int status) __attribute__((noreturn));
 /* Direct PTY writes for iOS soft keyboard (bypasses wl_keyboard). */
 void wwn_ios_terminal_set_master(int master_fd);
 void wwn_ios_terminal_clear_master(int master_fd);
