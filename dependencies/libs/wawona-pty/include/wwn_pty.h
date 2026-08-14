@@ -36,6 +36,13 @@ int wwn_ios_terminal_is_active(void);
 ssize_t wwn_ios_terminal_inject(const void *buf, size_t len);
 
 /*
+ * After an intentional client stop / soft-exit, allow another in-process shell
+ * spawn in this address space. Does nothing while a shell job is still marked
+ * running. watchOS Stop → Start needs this; zsh global re-init remains best-effort.
+ */
+void wwn_pty_ios_allow_new_shell_session(void);
+
+/*
  * In-process external-command dispatch (App Store compliant: no fork/exec).
  *
  * The zsh exec hook calls this before it would otherwise fork/exec an external

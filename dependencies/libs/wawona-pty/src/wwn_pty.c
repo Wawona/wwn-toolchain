@@ -415,15 +415,35 @@ static pthread_mutex_t ios_shell_jobs_lock = PTHREAD_MUTEX_INITIALIZER;
 static pid_t ios_next_fake_pid = 48000;
 
 /*
- * zsh keeps process-global state (the zsh heap allocator, parameter/builtin
- * tables, ZLE, signal queue) that is initialized in main() and is NOT safe to
- * set up twice in one address space. We therefore allow exactly one in-process
- * shell session per app launch. Re-entrant / multi-session zsh (reopening the
- * terminal without relaunching) is a documented follow-up.
+ * zsh keeps process-global state that is awkward to re-init. We still latch
+ * while a shell job is alive, but soft-exit / intentional Stop clears the
+ * latch via wwn_pty_ios_allow_new_shell_session() so Stop→Start works.
  */
 static int ios_shell_session_used;
 static pthread_t ios_shell_io_thread;
 static int ios_shell_io_active;
+
+void
+wwn_pty_ios_allow_new_shell_session(void)
+{
+	int i;
+
+	pthread_mutex_lock(&ios_shell_jobs_lock);
+	for (i = 0; i < WWN_IOS_MAX_SHELL_JOBS; i++) {
+		if (ios_shell_jobs[i].running) {
+			pthread_mutex_unlock(&ios_shell_jobs_lock);
+			WWN_PTY_LOG(
+			        "wwn_pty: allow_new_shell_session skipped — shell still running\n");
+			return;
+		}
+	}
+	for (i = 0; i < WWN_IOS_MAX_SHELL_JOBS; i++)
+		memset(&ios_shell_jobs[i], 0, sizeof ios_shell_jobs[i]);
+	ios_shell_session_used = 0;
+	ios_shell_io_active = 0;
+	pthread_mutex_unlock(&ios_shell_jobs_lock);
+	WWN_PTY_LOG("wwn_pty: allow_new_shell_session — latch cleared\n");
+}
 
 static struct wwn_ios_shell_job *
 ios_shell_job_alloc(void)
@@ -759,6 +779,11 @@ ios_zsh_thread(void *arg)
 
 	ios_shell_io_active = 0;
 	job->running = 0;
+	/* Soft-exit / normal return: release the one-shot latch so Stop→Start
+	 * (or a second weston-terminal launch) can spawn again. */
+	pthread_mutex_lock(&ios_shell_jobs_lock);
+	ios_shell_session_used = 0;
+	pthread_mutex_unlock(&ios_shell_jobs_lock);
 	return NULL;
 }
 
