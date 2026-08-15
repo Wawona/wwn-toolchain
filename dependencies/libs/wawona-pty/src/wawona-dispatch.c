@@ -32,6 +32,8 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <fcntl.h>
+#include <unistd.h>
 #if defined(__APPLE__)
 #include <TargetConditionals.h>
 #endif
@@ -55,6 +57,10 @@ extern int wawona_coreutils_main(int argc, const char *const *argv)
 
 /* Provided by wwn-fastfetch (libfastfetch.a, main renamed to fastfetch_main). */
 extern int fastfetch_main(int argc, char *argv[])
+    __attribute__((weak));
+
+/* Provided by wwn-phoon-rs (libphoon_rs.a, C ABI phoon_main). */
+extern int phoon_main(int argc, char *argv[])
     __attribute__((weak));
 
 /* Provided by wwn-neovim (libwawona-neovim.a, main renamed to wawona_nvim_main). */
@@ -123,6 +129,18 @@ extern int scaler_main(int argc, char *argv[])
 extern int editor_main(int argc, char *argv[])
     __attribute__((weak));
 extern int constraints_main(int argc, char *argv[])
+    __attribute__((weak));
+extern int weston_terminal_main(int argc, char *argv[])
+    __attribute__((weak));
+
+/*
+ * Provided by wwn-wasm (libwawona_wasm.a). Weak so watchOS and builds
+ * without the runtime still link. Never add a strong stub — that would
+ * satisfy -u and skip the real archive.
+ */
+extern int wawona_wasm_run(int argc, char *argv[])
+    __attribute__((weak));
+extern int wawona_wasm_can_run(const char *path)
     __attribute__((weak));
 
 static void
@@ -213,6 +231,7 @@ static const wwn_wayland_entry_t wwn_wayland_clients[] = {
 	{ "weston-scaler",     (wwn_client_fn)scaler_main     },
 	{ "weston-editor",     (wwn_client_fn)editor_main     },
 	{ "weston-constraints",(wwn_client_fn)constraints_main},
+	{ "weston-terminal",   (wwn_client_fn)weston_terminal_main },
 };
 
 #define WWN_WAYLAND_CLIENTS_N \
@@ -280,6 +299,124 @@ wwn_run_clear(void)
 	return 0;
 }
 
+static int
+wwn_is_help_name(const char *name)
+{
+	return name != NULL
+	    && (strcmp(name, "help") == 0
+	        || strcmp(name, "wawona") == 0);
+}
+
+static int
+wwn_name_ends_with_wasm(const char *name)
+{
+	size_t n;
+
+	if (name == NULL)
+		return 0;
+	n = strlen(name);
+	return n >= 5 && strcmp(name + n - 5, ".wasm") == 0;
+}
+
+static int
+wwn_file_is_wasm(const char *path)
+{
+	unsigned char mag[4];
+	int fd;
+	ssize_t n;
+
+	if (path == NULL || path[0] == '\0')
+		return 0;
+	fd = open(path, O_RDONLY);
+	if (fd < 0)
+		return 0;
+	n = read(fd, mag, 4);
+	close(fd);
+	return n == 4 && mag[0] == 0x00 && mag[1] == 'a'
+	    && mag[2] == 's' && mag[3] == 'm';
+}
+
+static void
+wwn_print_linked(const char *name, int linked)
+{
+	if (linked)
+		fprintf(stdout, "  %-22s  bundled\n", name);
+}
+
+static int
+wwn_run_help(int argc, char *const argv[])
+{
+	size_t i;
+	size_t n;
+
+	(void)argc;
+	(void)argv;
+	fprintf(stdout, "Wawona in-process shell — type a name; there is no fork/exec.\n");
+	fprintf(stdout, "Milestone: Support WASI P1 P2 WASM!  https://github.com/Wawona/Wawona/milestone/2\n\n");
+
+	fprintf(stdout, "Builtins (zsh):\n");
+	fprintf(stdout, "  cd  export  alias  unalias  setopt  unsetopt  echo  print  pwd\n");
+	fprintf(stdout, "  true  false  test  [  source  .  exit  return  jobs  fg  bg\n\n");
+
+	fprintf(stdout, "Catalog command:\n");
+	fprintf(stdout, "  help, wawona          this list\n");
+	fprintf(stdout, "  clear                 reset the terminal\n");
+	fprintf(stdout, "  apt                   optional App Store modules\n\n");
+
+	fprintf(stdout, "uutils (in-process");
+	if (wawona_coreutils_main == NULL)
+		fprintf(stdout, ", not linked in this build");
+	fprintf(stdout, "):\n  ");
+	n = sizeof wwn_safe_subset / sizeof wwn_safe_subset[0];
+	for (i = 0; i < n; i++) {
+		fprintf(stdout, "%s%s", wwn_safe_subset[i],
+		        (i + 1 == n) ? "\n" : " ");
+	}
+	fprintf(stdout, "\n");
+
+	fprintf(stdout, "Bundled clients (linked in this binary):\n");
+	wwn_print_linked("fastfetch", fastfetch_main != NULL);
+	wwn_print_linked("phoon", phoon_main != NULL);
+	wwn_print_linked("nvim / vi / vim", wawona_nvim_main != NULL);
+	wwn_print_linked("waypipe", waypipe_main != NULL);
+	wwn_print_linked("ssh", ssh_main != NULL);
+	wwn_print_linked("ssh-keygen", ssh_keygen_main != NULL);
+	wwn_print_linked("scp", scp_main != NULL);
+	wwn_print_linked("fuzzel", fuzzel_main != NULL);
+	wwn_print_linked("foot", foot_main != NULL);
+	for (i = 0; i < WWN_WAYLAND_CLIENTS_N; i++) {
+		if (wwn_wayland_clients[i].fn != NULL)
+			wwn_print_linked(wwn_wayland_clients[i].name, 1);
+	}
+	fprintf(stdout, "\n");
+
+	fprintf(stdout, "WASM / WASI (user .wasm documents; not Apple-signed):\n");
+	if (wawona_wasm_run != NULL) {
+		fprintf(stdout, "  wasm <file.wasm> [args]   run WASI P1 or P2\n");
+		fprintf(stdout, "  ./file.wasm [args]        same, by magic \\\\0asm\n");
+		fprintf(stdout, "  Drop .wasm into the Wawona Files / Documents folder.\n");
+	} else {
+		fprintf(stdout, "  coming — wwn-wasm is not linked in this build.\n");
+		fprintf(stdout, "  See https://github.com/Wawona/Wawona/issues/146\n");
+	}
+	fprintf(stdout, "\nList names: ls $WAWONA_ROOTFS/usr/bin   or   ls ../usr/bin\n");
+	fprintf(stdout, "Prefer a native port when we have one.\n");
+	fflush(stdout);
+	return 0;
+}
+
+static int
+wwn_run_wasm(int argc, char *argv[])
+{
+	if (wawona_wasm_run == NULL) {
+		fprintf(stdout,
+		        "wawona: WASM runtime is not linked in this build (see `help`).\n");
+		fflush(stdout);
+		return 127;
+	}
+	return wawona_wasm_run(argc, argv);
+}
+
 int
 wawona_dispatch_can_handle(const char *argv0)
 {
@@ -287,9 +424,17 @@ wawona_dispatch_can_handle(const char *argv0)
 
 	if (name == NULL || name[0] == '\0')
 		return 0;
+	if (wwn_is_help_name(name))
+		return 1;
 	if (strcmp(name, "clear") == 0)
 		return 1;
+	if (strcmp(name, "wasm") == 0)
+		return 1;
+	if (wwn_name_ends_with_wasm(name) || wwn_file_is_wasm(argv0))
+		return 1;
 	if (strcmp(name, "fastfetch") == 0 && fastfetch_main != NULL)
+		return 1;
+	if (strcmp(name, "phoon") == 0 && phoon_main != NULL)
 		return 1;
 	if (strcmp(name, "fuzzel") == 0 && fuzzel_main != NULL)
 		return 1;
@@ -334,13 +479,41 @@ wawona_dispatch_inprocess(const char *path, char *const argv[],
 	if (name == NULL || name[0] == '\0')
 		return WWN_DISPATCH_NOT_HANDLED;
 
+	if (wwn_is_help_name(name)) {
+		while (argv[argc] != NULL)
+			argc++;
+		return wwn_run_help(argc, argv);
+	}
+
 	if (strcmp(name, "clear") == 0)
 		return wwn_run_clear();
+
+	if (strcmp(name, "wasm") == 0) {
+		while (argv[argc] != NULL)
+			argc++;
+		return wwn_run_wasm(argc, argv);
+	}
+
+	if (wwn_name_ends_with_wasm(name) || wwn_file_is_wasm(path)
+	    || wwn_file_is_wasm(argv[0])) {
+		while (argv[argc] != NULL)
+			argc++;
+		return wwn_run_wasm(argc, argv);
+	}
 
 	if (strcmp(name, "fastfetch") == 0 && fastfetch_main != NULL) {
 		while (argv[argc] != NULL)
 			argc++;
 		rc = fastfetch_main(argc, argv);
+		fflush(stdout);
+		fflush(stderr);
+		return rc;
+	}
+
+	if (strcmp(name, "phoon") == 0 && phoon_main != NULL) {
+		while (argv[argc] != NULL)
+			argc++;
+		rc = phoon_main(argc, argv);
 		fflush(stdout);
 		fflush(stderr);
 		return rc;
