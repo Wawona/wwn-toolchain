@@ -5,6 +5,9 @@
 #include <stddef.h>
 #include <termios.h>
 #include <sys/ioctl.h>
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -38,9 +41,18 @@ ssize_t wwn_ios_terminal_inject(const void *buf, size_t len);
 /*
  * After an intentional client stop / soft-exit, allow another in-process shell
  * spawn in this address space. Does nothing while a shell job is still marked
- * running. watchOS Stop → Start needs this; zsh global re-init remains best-effort.
+ * running. Prefer wwn_pty_ios_stop_shell_session() on Stop — that joins zsh
+ * first so the latch can actually clear. zsh global re-init is best-effort.
  */
 void wwn_pty_ios_allow_new_shell_session(void);
+
+/*
+ * Host Stop path: EOF the fake TTY, wake a pace wait, join the zsh pthread,
+ * then clear the one-shot latch. Safe to call when no shell is running.
+ * watchOS (and any Apple-mobile Stop → Start) must use this; cancelling the
+ * weston-terminal thread does not reap in-process zsh.
+ */
+void wwn_pty_ios_stop_shell_session(void);
 
 /*
  * In-process external-command dispatch (App Store compliant: no fork/exec).

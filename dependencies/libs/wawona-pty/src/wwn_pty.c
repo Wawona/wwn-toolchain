@@ -416,12 +416,26 @@ static pid_t ios_next_fake_pid = 48000;
 
 /*
  * zsh keeps process-global state that is awkward to re-init. We still latch
- * while a shell job is alive, but soft-exit / intentional Stop clears the
- * latch via wwn_pty_ios_allow_new_shell_session() so Stop→Start works.
+ * while a shell job is alive. Stop must call wwn_pty_ios_stop_shell_session()
+ * (join zsh, then clear the latch). allow_new_shell_session() alone no-ops
+ * while the job is still marked running.
  */
 static int ios_shell_session_used;
 static pthread_t ios_shell_io_thread;
 static int ios_shell_io_active;
+
+static void
+ios_close_fd(int *fdp)
+{
+	int fd;
+
+	if (fdp == NULL)
+		return;
+	fd = *fdp;
+	*fdp = -1;
+	if (fd >= 0)
+		close(fd);
+}
 
 void
 wwn_pty_ios_allow_new_shell_session(void)
@@ -443,6 +457,43 @@ wwn_pty_ios_allow_new_shell_session(void)
 	ios_shell_io_active = 0;
 	pthread_mutex_unlock(&ios_shell_jobs_lock);
 	WWN_PTY_LOG("wwn_pty: allow_new_shell_session — latch cleared\n");
+}
+
+void
+wwn_pty_ios_stop_shell_session(void)
+{
+	int i;
+	int nthreads = 0;
+	pthread_t threads[WWN_IOS_MAX_SHELL_JOBS];
+
+	pthread_mutex_lock(&ios_terminal_master_lock);
+	ios_close_fd(&ios_pty_input_write);
+	pthread_mutex_unlock(&ios_terminal_master_lock);
+
+	pthread_mutex_lock(&ios_shell_jobs_lock);
+	for (i = 0; i < WWN_IOS_MAX_SHELL_JOBS; i++) {
+		ios_close_fd(&ios_shell_jobs[i].pace_read_fd);
+		ios_close_fd(&ios_shell_jobs[i].slave_fd);
+		ios_close_fd(&ios_shell_jobs[i].input_read_fd);
+		if (ios_shell_jobs[i].running && ios_shell_jobs[i].fake_pid != 0)
+			threads[nthreads++] = ios_shell_jobs[i].thread;
+	}
+	if (ios_shell_io_active && nthreads == 0)
+		threads[nthreads++] = ios_shell_io_thread;
+	pthread_mutex_unlock(&ios_shell_jobs_lock);
+
+	if (nthreads > 0 && ios_shell_io_active)
+		(void)pthread_kill(ios_shell_io_thread, SIGINT);
+
+	for (i = 0; i < nthreads; i++) {
+		void *rv;
+
+		pthread_join(threads[i], &rv);
+	}
+
+	WWN_PTY_LOG("wwn_pty: stop_shell_session — joined %d zsh thread(s)\n",
+	            nthreads);
+	wwn_pty_ios_allow_new_shell_session();
 }
 
 static struct wwn_ios_shell_job *
@@ -682,11 +733,17 @@ ios_zsh_thread(void *arg)
 	int in_fd;
 
 	if (job->pace_read_fd >= 0) {
+		int pace_fd;
+
 		do {
 			n = read(job->pace_read_fd, &tmp, 1);
 		} while (n < 0 && errno == EINTR);
-		close(job->pace_read_fd);
+		pthread_mutex_lock(&ios_shell_jobs_lock);
+		pace_fd = job->pace_read_fd;
 		job->pace_read_fd = -1;
+		pthread_mutex_unlock(&ios_shell_jobs_lock);
+		if (pace_fd >= 0)
+			close(pace_fd);
 		WWN_PTY_LOG("wwn_pty: pace unblocked, starting in-process zsh\n");
 	}
 
