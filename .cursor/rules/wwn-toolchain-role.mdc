@@ -1,0 +1,21 @@
+---
+description: wwn-toolchain role — L0 substrate only; product map lives elsewhere
+alwaysApply: true
+---
+
+# This repo: `wwn-toolchain` (L0)
+
+Substrate only (cairo, pango, pixman, fontconfig, libwayland, epoll-shim, …).
+
+## You own
+
+- Toolchain recipes, shims, baseRegistry keys for **non-graphics** substrate.
+
+## You do NOT own (never add here)
+
+- Desktop / LockScreen, Swinging Bridge, VMs, containers, Wasm Runtime / `wpm`
+- ANGLE / MoltenVK / iland / weston / kmscube flake inputs or registry keys
+
+See always-applied `wawona-product-map` and `Wawona/docs/wwn-repo-dag.md`.
+If a change needs product Mode A/B policy, document it in Wawona — do not invent
+toolchain Mode B paths.
