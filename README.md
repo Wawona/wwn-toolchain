@@ -1,5 +1,7 @@
 # wwn-toolchain
 
+[![CI](https://github.com/Wawona/wwn-toolchain/actions/workflows/ci.yml/badge.svg)](https://github.com/Wawona/wwn-toolchain/actions/workflows/ci.yml)
+
 Cross-compile toolchain, library substrate, and composable Nix registry shared by
 [Wawona](https://github.com/Wawona/Wawona) and every `wwn-*` patched-software repo
 (`wwn-zsh`, `wwn-weston`, `wwn-iland`, `wwn-kmscube`, `wwn-waypipe`, `wwn-coreutils`, `wwn-foot`, `wwn-fastfetch`, `wwn-ssh`).
