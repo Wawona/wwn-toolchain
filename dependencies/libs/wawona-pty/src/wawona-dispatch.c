@@ -61,7 +61,11 @@ extern int fastfetch_main(int argc, char *argv[])
 
 /* Provided by wwn-phoon-rs (libphoon_rs.a, C ABI phoon_main). */
 extern int phoon_main(int argc, char *argv[])
-    __attribute__((weak));
+	__attribute__((weak));
+
+/* Provided by wwn-wasm crates/wpm (libwpm.a). Weak so builds without wpm link. */
+extern int wpm_main(int argc, char *argv[])
+	__attribute__((weak));
 
 /* Provided by wwn-neovim (libwawona-neovim.a, main renamed to wawona_nvim_main). */
 extern int wawona_nvim_main(int argc, char *argv[])
@@ -393,11 +397,18 @@ wwn_run_help(int argc, char *const argv[])
 	fprintf(stdout, "WASM / WASI (user .wasm documents; not Apple-signed):\n");
 	if (wawona_wasm_run != NULL) {
 		fprintf(stdout, "  wasm <file.wasm> [args]   run WASI P1 or P2\n");
+		fprintf(stdout, "  wasm <package> [args]     run installed Runtime package\n");
 		fprintf(stdout, "  ./file.wasm [args]        same, by magic \\\\0asm\n");
 		fprintf(stdout, "  Drop .wasm into the Wawona Files / Documents folder.\n");
 	} else {
 		fprintf(stdout, "  coming — wwn-wasm is not linked in this build.\n");
 		fprintf(stdout, "  See https://github.com/Wawona/Wawona/issues/146\n");
+	}
+	if (wpm_main != NULL) {
+		fprintf(stdout, "\nRuntime packages (wpm — Mode A registry + local store):\n");
+		fprintf(stdout, "  wpm install ./file.wasm   register a local .wasm\n");
+		fprintf(stdout, "  wpm install <name>        from repo.wawona.io/wasm\n");
+		fprintf(stdout, "  wpm list | search | remove <name>\n");
 	}
 	fprintf(stdout, "\nList names: ls $WAWONA_ROOTFS/usr/bin   or   ls ../usr/bin\n");
 	fprintf(stdout, "Prefer a native port when we have one.\n");
@@ -435,6 +446,8 @@ wawona_dispatch_can_handle(const char *argv0)
 	if (strcmp(name, "fastfetch") == 0 && fastfetch_main != NULL)
 		return 1;
 	if (strcmp(name, "phoon") == 0 && phoon_main != NULL)
+		return 1;
+	if (strcmp(name, "wpm") == 0 && wpm_main != NULL)
 		return 1;
 	if (strcmp(name, "fuzzel") == 0 && fuzzel_main != NULL)
 		return 1;
@@ -514,6 +527,15 @@ wawona_dispatch_inprocess(const char *path, char *const argv[],
 		while (argv[argc] != NULL)
 			argc++;
 		rc = phoon_main(argc, argv);
+		fflush(stdout);
+		fflush(stderr);
+		return rc;
+	}
+
+	if (strcmp(name, "wpm") == 0 && wpm_main != NULL) {
+		while (argv[argc] != NULL)
+			argc++;
+		rc = wpm_main(argc, argv);
 		fflush(stdout);
 		fflush(stderr);
 		return rc;
