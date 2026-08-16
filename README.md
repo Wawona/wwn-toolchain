@@ -54,6 +54,9 @@ tc.buildForIOS "weston" { }
   -> `{ buildForIOS, buildForIPadOS, buildForTVOS, buildForWatchOS, buildForVisionOS, buildForAndroid, buildForWearOS, buildForMacOS, buildForLinux, androidToolchain, macos }`
 - `lib.baseRegistry` - the library substrate registry (module name -> per-platform recipe paths).
 - `lib.withPlatformVariants` - the registry-entry normalizer fragments reuse so their fallback semantics match the base registry.
+- `lib.macosOnly` - `withPlatformVariants { macos = …; }` for Darwin-only keys.
+  Apple `container` / Containerization.framework is **macOS-only** and lives in
+  `wwn-containers`, not this substrate (`baseRegistry` throws on those keys).
 
 ## Registry fragments
 

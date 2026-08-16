@@ -9,6 +9,12 @@ rec {
   # Registry-entry normalizer shared with out-of-tree fragments.
   inherit (wpv) withPlatformVariants firstNonNull;
 
+  # macOS-only registry entry. Other platforms stay null so buildForIOS/etc.
+  # throw "Missing … module mapping" instead of silently falling back.
+  # Use for Apple Containerization / apple-container — never put those keys
+  # in baseRegistry (L3′ wwn-containers owns them; macOS only).
+  macosOnly = macos: wpv.withPlatformVariants { inherit macos; };
+
   # The cross-compile LIBRARY substrate + wawona-pty. Merge wwn-* fragments on
   # top of this to obtain a full registry, e.g.
   #   registry = baseRegistry // wwn-zsh.registryFragment // wwn-weston.registryFragment;

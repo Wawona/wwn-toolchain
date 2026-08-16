@@ -33,6 +33,11 @@ it; it depends on **no `wwn-*` repo**.
 `angle` and `swiftshader` have moved to `wwn-iland` (L1). Do not re-add their
 recipes or registry entries here.
 
+Apple's `container` CLI and `Containerization.framework` are **macOS-only** and
+live in `wwn-containers` (L3′). `baseRegistry` throws on `apple-container` /
+`containerization`. Use `lib.macosOnly` in the consumer fragment; never add a
+Darwin-only app CLI to this substrate.
+
 Canonical: `Wawona/docs/wwn-repo-dag.md` + workspace rule `wawona-repo-dag`.
 
 ## Do / don't

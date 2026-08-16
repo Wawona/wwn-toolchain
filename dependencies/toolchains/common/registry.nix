@@ -287,4 +287,9 @@ in
   # These are ownership sentinels only; L0 never imports graphics recipes.
   angle = throw "angle moved to wwn-iland.registryFragment (L1)";
   swiftshader = throw "swiftshader moved to wwn-iland.registryFragment (L1)";
+  # Apple Containerization / apple `container` CLI is L3′ (wwn-containers) and
+  # macOS-only. Never absorb these keys into the L0 substrate.
+  # Canonical: Wawona/docs/wwn-repo-dag.md
+  apple-container = throw "apple-container is macOS-only and lives in wwn-containers (L3′), not wwn-toolchain";
+  containerization = throw "Containerization.framework is macOS-only and lives in wwn-containers (L3′), not wwn-toolchain";
 }
