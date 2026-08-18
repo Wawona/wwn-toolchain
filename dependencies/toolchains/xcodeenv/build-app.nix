@@ -139,7 +139,9 @@ stdenv.mkDerivation (
       export LD="$CC"
 
       ${lib.optionalString (lib.hasSuffix "simulator" _sdk) ''
-        if [ "''${WAWONA_SKIP_IOS_SIMULATOR_PLATFORM_DOWNLOAD:-}" = "1" ]; then
+        if xcodebuild -showsdks 2>/dev/null | grep -q iphonesimulator; then
+          echo "Host already has iphonesimulator SDK; skipping -downloadPlatform iOS"
+        elif [ "''${WAWONA_SKIP_IOS_SIMULATOR_PLATFORM_DOWNLOAD:-}" = "1" ]; then
           echo "Skipping xcodebuild -downloadPlatform iOS (WAWONA_SKIP_IOS_SIMULATOR_PLATFORM_DOWNLOAD=1)"
         else
           # actool CompileAssetCatalogVariant thinned needs a Simulator *runtime* whose build
