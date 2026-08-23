@@ -26,7 +26,6 @@ pkgs.stdenv.mkDerivation {
     pkg-config
     (python3.withPackages (ps: with ps; [
       setuptools
-      pip
       packaging
       mako
       pyyaml

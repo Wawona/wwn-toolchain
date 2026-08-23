@@ -51,10 +51,11 @@ pkgs.stdenv.mkDerivation {
     meson
     ninja
     pkg-config
+    # pip's docs pull Sphinx → charset-normalizer/mypyc → mypy pytest.
+    # Meson and wayland-scanner need mako, not pip.
     (python3.withPackages (
       ps: with ps; [
         setuptools
-        pip
         packaging
         mako
         pyyaml

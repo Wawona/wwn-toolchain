@@ -13,7 +13,7 @@ pkgs.stdenv.mkDerivation {
   __noChroot = true;
   nativeBuildInputs = with buildPackages; [
     meson ninja pkg-config
-    (python3.withPackages (ps: with ps; [ setuptools pip packaging mako pyyaml ]))
+    (python3.withPackages (ps: with ps; [ setuptools packaging mako pyyaml ]))
   ];
   preConfigure = ''
     unset DEVELOPER_DIR
