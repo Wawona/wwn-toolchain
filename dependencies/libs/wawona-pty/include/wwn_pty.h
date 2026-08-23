@@ -41,16 +41,17 @@ ssize_t wwn_ios_terminal_inject(const void *buf, size_t len);
 /*
  * After an intentional client stop / soft-exit, allow another in-process shell
  * spawn in this address space. Does nothing while a shell job is still marked
- * running. Prefer wwn_pty_ios_stop_shell_session() on Stop — that joins zsh
- * first so the latch can actually clear. zsh global re-init is best-effort.
+ * running. Prefer wwn_pty_ios_stop_shell_session() on Stop. The first job is
+ * interactive zsh (not re-entrant). Further PTY sessions use a nested
+ * in-process dispatch loop so Foot and weston-terminal can run together.
  */
 void wwn_pty_ios_allow_new_shell_session(void);
 
 /*
- * Host Stop path: EOF the fake TTY, wake a pace wait, join the zsh pthread,
- * then clear the one-shot latch. Safe to call when no shell is running.
- * watchOS (and any Apple-mobile Stop → Start) must use this; cancelling the
- * weston-terminal thread does not reap in-process zsh.
+ * Host Stop path: EOF each fake TTY, join shell pthreads, then clear jobs.
+ * Safe to call when no shell is running. watchOS (and any Apple-mobile
+ * Stop -> Start) must use this; cancelling the weston-terminal thread does
+ * not reap in-process zsh.
  */
 void wwn_pty_ios_stop_shell_session(void);
 

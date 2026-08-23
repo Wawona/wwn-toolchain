@@ -231,7 +231,51 @@ wwn_pty_is_allowed_shell_path(const char *shell_path)
 #if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
 static int ios_pty_input_read = -1;
 static int ios_pty_input_write = -1;
+static int ios_terminal_master = -1;
 static pthread_mutex_t ios_terminal_master_lock = PTHREAD_MUTEX_INITIALIZER;
+
+#define WWN_IOS_MAX_PTYS 8
+struct ios_pty_slot {
+	int master;
+	int slave;
+	int input_read;
+	int input_write;
+	int live;
+};
+static struct ios_pty_slot ios_ptys[WWN_IOS_MAX_PTYS];
+
+static struct ios_pty_slot *
+ios_pty_slot_by_master(int master)
+{
+	int i;
+
+	for (i = 0; i < WWN_IOS_MAX_PTYS; i++) {
+		if (ios_ptys[i].live && ios_ptys[i].master == master)
+			return &ios_ptys[i];
+	}
+	return NULL;
+}
+
+static struct ios_pty_slot *
+ios_pty_slot_by_slave(int slave)
+{
+	int i;
+
+	for (i = 0; i < WWN_IOS_MAX_PTYS; i++) {
+		if (ios_ptys[i].live && ios_ptys[i].slave == slave)
+			return &ios_ptys[i];
+	}
+	return NULL;
+}
+
+static void
+ios_pty_focus_slot(struct ios_pty_slot *slot)
+{
+	if (slot == NULL)
+		return;
+	ios_pty_input_read = slot->input_read;
+	ios_pty_input_write = slot->input_write;
+}
 /*
  * Process-global latch for the fake-TTY shim. setenv("WAWONA_PTY_FAKE_TTY")
  * is fragile: zsh rebuilds the global `environ` during startup, so a later
@@ -246,6 +290,19 @@ open_pipe_fallback(int *master_fd, int *slave_fd, int pty_err)
 {
 	int fds[2];
 	int input_pipe[2];
+	int i;
+	struct ios_pty_slot *slot = NULL;
+
+	for (i = 0; i < WWN_IOS_MAX_PTYS; i++) {
+		if (!ios_ptys[i].live) {
+			slot = &ios_ptys[i];
+			break;
+		}
+	}
+	if (slot == NULL) {
+		errno = EMFILE;
+		return -1;
+	}
 
 	if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) != 0)
 		return -1;
@@ -256,6 +313,10 @@ open_pipe_fallback(int *master_fd, int *slave_fd, int pty_err)
 	 * breaks zsh ZLE (typed bytes never reach the line editor). Stderr is
 	 * wired to wwn_app_log_fd() in ios_zsh_thread so NSLog/os_log does not
 	 * leak into weston-terminal.
+	 *
+	 * Each session keeps its own pair. Closing the previous pipe here used
+	 * to make a second weston-terminal (or Foot + weston-terminal) steal
+	 * the only keyboard pipe and latch one shell.
 	 */
 	if (pipe(input_pipe) != 0) {
 		close(fds[0]);
@@ -263,20 +324,22 @@ open_pipe_fallback(int *master_fd, int *slave_fd, int pty_err)
 		return -1;
 	}
 
-	if (ios_pty_input_read >= 0)
-		close(ios_pty_input_read);
-	if (ios_pty_input_write >= 0)
-		close(ios_pty_input_write);
-	ios_pty_input_read = input_pipe[0];
-	ios_pty_input_write = input_pipe[1];
+	slot->master = fds[0];
+	slot->slave = fds[1];
+	slot->input_read = input_pipe[0];
+	slot->input_write = input_pipe[1];
+	slot->live = 1;
+
+	if (ios_pty_input_write < 0)
+		ios_pty_focus_slot(slot);
 
 	*master_fd = fds[0];
 	*slave_fd = fds[1];
 	ios_fake_tty_forced = 1;
 	setenv("WAWONA_PTY_FAKE_TTY", "1", 1);
 	WWN_PTY_LOG(
-	        "wwn_pty: iOS sandbox blocks POSIX PTY (%s); using socketpair + input pipe + fake TTY shim for zsh\n",
-	        strerror(pty_err));
+	        "wwn_pty: iOS sandbox blocks POSIX PTY (%s); using socketpair + input pipe + fake TTY shim for zsh (slot master=%d)\n",
+	        strerror(pty_err), slot->master);
 	return 0;
 }
 
@@ -402,7 +465,9 @@ struct wwn_ios_shell_job {
 	void *dylib;
 	int slave_fd;
 	int input_read_fd;
+	int input_write_fd;
 	int pace_read_fd;
+	int nested;
 	char *argv_storage[12];
 	char *argv[12];
 	volatile int running;
@@ -413,14 +478,13 @@ struct wwn_ios_shell_job {
 static struct wwn_ios_shell_job ios_shell_jobs[WWN_IOS_MAX_SHELL_JOBS];
 static pthread_mutex_t ios_shell_jobs_lock = PTHREAD_MUTEX_INITIALIZER;
 static pid_t ios_next_fake_pid = 48000;
+static pthread_mutex_t ios_stdio_lock = PTHREAD_MUTEX_INITIALIZER;
 
 /*
- * zsh keeps process-global state that is awkward to re-init. We still latch
- * while a shell job is alive. Stop must call wwn_pty_ios_stop_shell_session()
- * (join zsh, then clear the latch). allow_new_shell_session() alone no-ops
- * while the job is still marked running.
+ * Interactive zsh_main is process-global (not re-entrant). The first shell
+ * job runs zsh. Further PTY sessions get a nested dispatch loop on their
+ * own socketpair so Foot + weston-terminal can both stay up.
  */
-static int ios_shell_session_used;
 static pthread_t ios_shell_io_thread;
 static int ios_shell_io_active;
 
@@ -447,16 +511,15 @@ wwn_pty_ios_allow_new_shell_session(void)
 		if (ios_shell_jobs[i].running) {
 			pthread_mutex_unlock(&ios_shell_jobs_lock);
 			WWN_PTY_LOG(
-			        "wwn_pty: allow_new_shell_session skipped — shell still running\n");
+			        "wwn_pty: allow_new_shell_session skipped, shell still running\n");
 			return;
 		}
 	}
 	for (i = 0; i < WWN_IOS_MAX_SHELL_JOBS; i++)
 		memset(&ios_shell_jobs[i], 0, sizeof ios_shell_jobs[i]);
-	ios_shell_session_used = 0;
 	ios_shell_io_active = 0;
 	pthread_mutex_unlock(&ios_shell_jobs_lock);
-	WWN_PTY_LOG("wwn_pty: allow_new_shell_session — latch cleared\n");
+	WWN_PTY_LOG("wwn_pty: allow_new_shell_session, jobs cleared\n");
 }
 
 void
@@ -466,15 +529,12 @@ wwn_pty_ios_stop_shell_session(void)
 	int nthreads = 0;
 	pthread_t threads[WWN_IOS_MAX_SHELL_JOBS];
 
-	pthread_mutex_lock(&ios_terminal_master_lock);
-	ios_close_fd(&ios_pty_input_write);
-	pthread_mutex_unlock(&ios_terminal_master_lock);
-
 	pthread_mutex_lock(&ios_shell_jobs_lock);
 	for (i = 0; i < WWN_IOS_MAX_SHELL_JOBS; i++) {
 		ios_close_fd(&ios_shell_jobs[i].pace_read_fd);
 		ios_close_fd(&ios_shell_jobs[i].slave_fd);
 		ios_close_fd(&ios_shell_jobs[i].input_read_fd);
+		ios_close_fd(&ios_shell_jobs[i].input_write_fd);
 		if (ios_shell_jobs[i].running && ios_shell_jobs[i].fake_pid != 0)
 			threads[nthreads++] = ios_shell_jobs[i].thread;
 	}
@@ -491,7 +551,19 @@ wwn_pty_ios_stop_shell_session(void)
 		pthread_join(threads[i], &rv);
 	}
 
-	WWN_PTY_LOG("wwn_pty: stop_shell_session — joined %d zsh thread(s)\n",
+	for (i = 0; i < WWN_IOS_MAX_PTYS; i++) {
+		if (!ios_ptys[i].live)
+			continue;
+		ios_close_fd(&ios_ptys[i].input_read);
+		ios_close_fd(&ios_ptys[i].input_write);
+		ios_ptys[i].live = 0;
+		ios_ptys[i].master = -1;
+		ios_ptys[i].slave = -1;
+	}
+	ios_pty_input_read = -1;
+	ios_pty_input_write = -1;
+
+	WWN_PTY_LOG("wwn_pty: stop_shell_session, joined %d shell thread(s)\n",
 	            nthreads);
 	wwn_pty_ios_allow_new_shell_session();
 }
@@ -500,27 +572,28 @@ static struct wwn_ios_shell_job *
 ios_shell_job_alloc(void)
 {
 	int i;
+	int have_zsh = 0;
 
 	pthread_mutex_lock(&ios_shell_jobs_lock);
-	if (ios_shell_session_used) {
-		pthread_mutex_unlock(&ios_shell_jobs_lock);
-		WWN_PTY_LOG(
-		        "wwn_pty: refusing second in-process shell (zsh is not re-entrant; relaunch the app)\n");
-		errno = EAGAIN;
-		return NULL;
+	for (i = 0; i < WWN_IOS_MAX_SHELL_JOBS; i++) {
+		if (ios_shell_jobs[i].running && !ios_shell_jobs[i].nested)
+			have_zsh = 1;
 	}
 	for (i = 0; i < WWN_IOS_MAX_SHELL_JOBS; i++) {
 		if (!ios_shell_jobs[i].running && ios_shell_jobs[i].fake_pid == 0) {
 			memset(&ios_shell_jobs[i], 0, sizeof ios_shell_jobs[i]);
 			ios_shell_jobs[i].fake_pid = ++ios_next_fake_pid;
 			ios_shell_jobs[i].running = 1;
-			ios_shell_session_used = 1;
+			ios_shell_jobs[i].nested = have_zsh;
+			ios_shell_jobs[i].input_write_fd = -1;
 			pthread_mutex_unlock(&ios_shell_jobs_lock);
 			return &ios_shell_jobs[i];
 		}
 	}
 	pthread_mutex_unlock(&ios_shell_jobs_lock);
 	errno = EAGAIN;
+	WWN_PTY_LOG("wwn_pty: no free shell job slot (max %d)\n",
+	            WWN_IOS_MAX_SHELL_JOBS);
 	return NULL;
 }
 
@@ -557,6 +630,11 @@ static int
 ios_deliver_shell_tty_signal(unsigned char byte)
 {
 	int sig = 0;
+	int i;
+	pthread_t target = 0;
+	int found = 0;
+	int inject_fd;
+	int pipe_only = 0;
 
 	if (byte == 3)
 		sig = SIGINT;
@@ -565,10 +643,37 @@ ios_deliver_shell_tty_signal(unsigned char byte)
 	else
 		return 0;
 
-	if (!ios_shell_io_active)
+	pthread_mutex_lock(&ios_terminal_master_lock);
+	inject_fd = ios_pty_input_write;
+	pthread_mutex_unlock(&ios_terminal_master_lock);
+
+	pthread_mutex_lock(&ios_shell_jobs_lock);
+	for (i = 0; i < WWN_IOS_MAX_SHELL_JOBS; i++) {
+		if (!ios_shell_jobs[i].running)
+			continue;
+		if (inject_fd >= 0 && ios_shell_jobs[i].input_write_fd == inject_fd) {
+			if (ios_shell_jobs[i].nested)
+				pipe_only = 1;
+			else {
+				target = ios_shell_jobs[i].thread;
+				found = 1;
+			}
+			break;
+		}
+	}
+	if (!found && !pipe_only && ios_shell_io_active) {
+		target = ios_shell_io_thread;
+		found = 1;
+	}
+	pthread_mutex_unlock(&ios_shell_jobs_lock);
+
+	if (pipe_only)
 		return 0;
 
-	(void)pthread_kill(ios_shell_io_thread, sig);
+	if (!found)
+		return 0;
+
+	(void)pthread_kill(target, sig);
 	WWN_PTY_LOG("wwn_pty: delivered signal %d for control byte 0x%02x\n", sig, byte);
 	return 1;
 }
@@ -763,16 +868,6 @@ ios_zsh_thread(void *arg)
 		if (job->input_read_fd >= 0 && job->input_read_fd > STDERR_FILENO)
 			close(job->input_read_fd);
 		job->input_read_fd = -1;
-		/*
-		 * Drop the parent's duplicate read end so keyboard bytes are only
-		 * consumed by zsh on stdin, never accidentally read elsewhere.
-		 */
-		pthread_mutex_lock(&ios_terminal_master_lock);
-		if (ios_pty_input_read >= 0 && ios_pty_input_read != STDIN_FILENO) {
-			close(ios_pty_input_read);
-			ios_pty_input_read = -1;
-		}
-		pthread_mutex_unlock(&ios_terminal_master_lock);
 
 		if (shell_out_fd >= 0) {
 			int app_log_fd = wwn_app_log_fd();
@@ -836,12 +931,191 @@ ios_zsh_thread(void *arg)
 
 	ios_shell_io_active = 0;
 	job->running = 0;
-	/* Soft-exit / normal return: release the one-shot latch so Stop→Start
-	 * (or a second weston-terminal launch) can spawn again. */
-	pthread_mutex_lock(&ios_shell_jobs_lock);
-	ios_shell_session_used = 0;
-	pthread_mutex_unlock(&ios_shell_jobs_lock);
 	return NULL;
+}
+
+static void
+ios_nested_write_all(int fd, const char *s)
+{
+	size_t n;
+	size_t off = 0;
+
+	if (fd < 0 || s == NULL)
+		return;
+	n = strlen(s);
+	while (off < n) {
+		ssize_t w = write(fd, s + off, n - off);
+
+		if (w <= 0)
+			break;
+		off += (size_t)w;
+	}
+}
+
+static void *
+ios_nested_shell_thread(void *arg)
+{
+	struct wwn_ios_shell_job *job = arg;
+	char line[1024];
+	size_t llen = 0;
+	const char *prompt = "wawona-nested % ";
+
+	WWN_PTY_LOG("wwn_pty: nested in-process shell pid=%d (zsh stays on first PTY)\n",
+	            (int)job->fake_pid);
+	ios_nested_write_all(job->slave_fd, prompt);
+
+	for (;;) {
+		unsigned char b;
+		ssize_t n;
+
+		if (job->input_read_fd < 0)
+			break;
+		n = read(job->input_read_fd, &b, 1);
+		if (n < 0 && errno == EINTR)
+			continue;
+		if (n <= 0)
+			break;
+		if (b == 3) {
+			ios_nested_write_all(job->slave_fd, "^C\r\n");
+			llen = 0;
+			ios_nested_write_all(job->slave_fd, prompt);
+			continue;
+		}
+		if (b == '\r' || b == '\n') {
+			char *argv[32];
+			int argc = 0;
+			char *tok;
+			char *save = NULL;
+			int rc;
+			char copy[1024];
+
+			ios_nested_write_all(job->slave_fd, "\r\n");
+			line[llen] = '\0';
+			llen = 0;
+			while (line[0] == ' ' || line[0] == '\t')
+				memmove(line, line + 1, strlen(line));
+			if (line[0] == '\0') {
+				ios_nested_write_all(job->slave_fd, prompt);
+				continue;
+			}
+			if (strcmp(line, "exit") == 0 || strcmp(line, "logout") == 0)
+				break;
+
+			memcpy(copy, line, strlen(line) + 1);
+			tok = strtok_r(copy, " \t", &save);
+			while (tok && argc < 31) {
+				argv[argc++] = tok;
+				tok = strtok_r(NULL, " \t", &save);
+			}
+			argv[argc] = NULL;
+			if (argc == 0) {
+				ios_nested_write_all(job->slave_fd, prompt);
+				continue;
+			}
+
+			pthread_mutex_lock(&ios_stdio_lock);
+			{
+				int saved_in = dup(STDIN_FILENO);
+				int saved_out = dup(STDOUT_FILENO);
+				int saved_err = dup(STDERR_FILENO);
+				int in_fd = dup(job->input_read_fd);
+				int out_fd = dup(job->slave_fd);
+
+				if (saved_in >= 0 && saved_out >= 0 && saved_err >= 0 &&
+				    in_fd >= 0 && out_fd >= 0) {
+					dup2(in_fd, STDIN_FILENO);
+					dup2(out_fd, STDOUT_FILENO);
+					dup2(out_fd, STDERR_FILENO);
+					rc = wawona_dispatch_inprocess(argv[0], argv, NULL);
+					dup2(saved_in, STDIN_FILENO);
+					dup2(saved_out, STDOUT_FILENO);
+					dup2(saved_err, STDERR_FILENO);
+				} else {
+					rc = WWN_DISPATCH_NOT_HANDLED;
+				}
+				if (in_fd >= 0)
+					close(in_fd);
+				if (out_fd >= 0)
+					close(out_fd);
+				if (saved_in >= 0)
+					close(saved_in);
+				if (saved_out >= 0)
+					close(saved_out);
+				if (saved_err >= 0)
+					close(saved_err);
+			}
+			pthread_mutex_unlock(&ios_stdio_lock);
+
+			if (rc == WWN_DISPATCH_NOT_HANDLED) {
+				char msg[160];
+
+				snprintf(msg, sizeof msg, "wawona: %s: not found\r\n",
+				         argv[0]);
+				ios_nested_write_all(job->slave_fd, msg);
+			}
+			ios_nested_write_all(job->slave_fd, prompt);
+			continue;
+		}
+		if (b == 8 || b == 127) {
+			if (llen > 0) {
+				llen--;
+				ios_nested_write_all(job->slave_fd, "\b \b");
+			}
+			continue;
+		}
+		if (b < 32)
+			continue;
+		if (llen + 1 < sizeof line) {
+			line[llen++] = (char)b;
+			(void)write(job->slave_fd, &b, 1);
+		}
+	}
+
+	ios_close_fd(&job->pace_read_fd);
+	ios_close_fd(&job->slave_fd);
+	ios_close_fd(&job->input_read_fd);
+	job->running = 0;
+	return NULL;
+}
+
+static void
+ios_pty_retarget_focus(void)
+{
+	int i;
+
+	pthread_mutex_lock(&ios_terminal_master_lock);
+	if (ios_pty_input_write < 0) {
+		for (i = 0; i < WWN_IOS_MAX_PTYS; i++) {
+			if (!ios_ptys[i].live || ios_ptys[i].input_write < 0)
+				continue;
+			ios_pty_focus_slot(&ios_ptys[i]);
+			ios_terminal_master = ios_ptys[i].master;
+			break;
+		}
+	}
+	pthread_mutex_unlock(&ios_terminal_master_lock);
+}
+
+static void
+ios_pty_release_slot(struct ios_pty_slot *slot)
+{
+	int wfd;
+
+	if (slot == NULL || !slot->live)
+		return;
+	wfd = slot->input_write;
+	ios_close_fd(&slot->input_read);
+	ios_close_fd(&slot->input_write);
+	slot->live = 0;
+	slot->master = -1;
+	slot->slave = -1;
+	pthread_mutex_lock(&ios_terminal_master_lock);
+	if (ios_pty_input_write == wfd) {
+		ios_pty_input_write = -1;
+		ios_pty_input_read = -1;
+	}
+	pthread_mutex_unlock(&ios_terminal_master_lock);
+	ios_pty_retarget_focus();
 }
 
 static pid_t
@@ -863,11 +1137,13 @@ ios_spawn_zsh_inprocess(const char *shell_path, char *const argv[], int slave_fd
 	job->pace_read_fd = -1;
 	job->slave_fd = -1;
 	job->input_read_fd = -1;
+	job->input_write_fd = -1;
 
 	/*
 	 * zsh is statically linked as wawona_zsh_main; never dlopen on iOS
 	 * (banned, and unnecessary). The shell thread calls wawona_zsh_main
-	 * directly.
+	 * directly. A second PTY (weston-terminal while Foot is up) uses the
+	 * nested dispatch loop because zsh_main is not re-entrant.
 	 */
 	job->dylib = NULL;
 
@@ -882,17 +1158,23 @@ ios_spawn_zsh_inprocess(const char *shell_path, char *const argv[], int slave_fd
 	 * no echo). "-i" makes the prompt + line editor unconditional.
 	 */
 	(void)shell_path;
-	spawn_argv[0] = (char *)"-zsh";
-	spawn_argv[1] = (char *)"-i";
-	spawn_argv[2] = NULL;
+	if (!job->nested) {
+		spawn_argv[0] = (char *)"-zsh";
+		spawn_argv[1] = (char *)"-i";
+		spawn_argv[2] = NULL;
 
-	for (i = 0; spawn_argv[i] != NULL && i < 11; i++) {
-		job->argv_storage[i] = strdup(spawn_argv[i]);
-		job->argv[i] = job->argv_storage[i];
+		for (i = 0; spawn_argv[i] != NULL && i < 11; i++) {
+			job->argv_storage[i] = strdup(spawn_argv[i]);
+			job->argv[i] = job->argv_storage[i];
+		}
+		job->argv[i] = NULL;
+		WWN_PTY_LOG(
+		        "wwn_pty: zsh spawn mode: in-process wawona_zsh_main (argv0=-zsh)\n");
+	} else {
+		WWN_PTY_LOG(
+		        "wwn_pty: nested spawn (Foot zsh already running, pid=%d)\n",
+		        (int)job->fake_pid);
 	}
-	job->argv[i] = NULL;
-
-	WWN_PTY_LOG("wwn_pty: zsh spawn mode: in-process wawona_zsh_main (argv0=-zsh)\n");
 
 	/*
 	 * pthread shares the fd table with terminal_run's caller. Parent closes
@@ -918,24 +1200,36 @@ ios_spawn_zsh_inprocess(const char *shell_path, char *const argv[], int slave_fd
 		}
 		shell_fd = fd;
 	}
-	if (ios_pty_input_read >= 0) {
-		int fd = dup(ios_pty_input_read);
+	{
+		struct ios_pty_slot *slot = ios_pty_slot_by_slave(slave_fd);
 
-		if (fd < 0) {
-			if (pace_fd >= 0 && pace_fd != pace_read_fd)
-				close(pace_fd);
-			if (shell_fd >= 0 && shell_fd != slave_fd)
-				close(shell_fd);
-			goto spawn_fail;
+		if (slot != NULL && slot->input_read >= 0) {
+			int old_read = slot->input_read;
+			int fd = dup(old_read);
+
+			if (fd < 0) {
+				if (pace_fd >= 0 && pace_fd != pace_read_fd)
+					close(pace_fd);
+				if (shell_fd >= 0 && shell_fd != slave_fd)
+					close(shell_fd);
+				goto spawn_fail;
+			}
+			job->input_read_fd = fd;
+			job->input_write_fd = slot->input_write;
+			close(old_read);
+			slot->input_read = -1;
+			pthread_mutex_lock(&ios_terminal_master_lock);
+			if (ios_pty_input_read == old_read)
+				ios_pty_input_read = -1;
+			pthread_mutex_unlock(&ios_terminal_master_lock);
 		}
-		job->input_read_fd = fd;
 	}
 
 	job->slave_fd = shell_fd;
 	job->pace_read_fd = pace_fd;
 
 	/*
-	 * In-process zsh shares this address space — WWNRootfsManager and
+	 * In-process zsh shares this address space. WWNRootfsManager and
 	 * terminal.c already setenv() before spawn. Re-applying environ[] here
 	 * used to mutate those strings and setenv() could reallocate environ,
 	 * leaving dangling pointers (EXC_BAD_ACCESS in strchr).
@@ -944,8 +1238,8 @@ ios_spawn_zsh_inprocess(const char *shell_path, char *const argv[], int slave_fd
 		ios_apply_envp(envp);
 
 	/*
-	 * zsh's recursive descent parser and evaluator (par_list → execlist →
-	 * execpline → execcmd_exec → doshfunc → execode → …) normally run on the
+	 * zsh's recursive descent parser and evaluator (par_list -> execlist ->
+	 * execpline -> execcmd_exec -> doshfunc -> execode) normally run on the
 	 * process main thread, which has a multi-megabyte stack. A secondary
 	 * pthread defaults to only 512 KB on iOS, which overflows while parsing
 	 * and executing large, deeply nested init scripts (e.g. compinit and the
@@ -958,7 +1252,9 @@ ios_spawn_zsh_inprocess(const char *shell_path, char *const argv[], int slave_fd
 		                              (size_t)16 * 1024 * 1024) == 0)
 			zsh_attrp = &zsh_attr;
 	}
-	i = pthread_create(&job->thread, zsh_attrp, ios_zsh_thread, job);
+	i = pthread_create(&job->thread, zsh_attrp,
+	                   job->nested ? ios_nested_shell_thread : ios_zsh_thread,
+	                   job);
 	if (zsh_attrp != NULL)
 		pthread_attr_destroy(zsh_attrp);
 	if (i != 0) {
@@ -973,14 +1269,15 @@ spawn_fail:
 			close(job->input_read_fd);
 		if (job->dylib != NULL)
 			dlclose(job->dylib);
+		ios_pty_release_slot(ios_pty_slot_by_slave(slave_fd));
 		job->fake_pid = 0;
 		job->running = 0;
-		/* Launch never started; release the single-session latch so the
-		 * user can retry without relaunching the app. */
-		pthread_mutex_lock(&ios_shell_jobs_lock);
-		ios_shell_session_used = 0;
-		pthread_mutex_unlock(&ios_shell_jobs_lock);
 		return -1;
+	}
+
+	if (!job->nested) {
+		ios_shell_io_thread = job->thread;
+		ios_shell_io_active = 1;
 	}
 
 	/*
@@ -993,8 +1290,8 @@ spawn_fail:
 	 * on its own, and resize_handler signals real size changes later, so the
 	 * eager kick is both unnecessary and unsafe.
 	 */
-	WWN_PTY_LOG("wwn_pty: started in-process zsh fake_pid=%d\n",
-	        (int)job->fake_pid);
+	WWN_PTY_LOG("wwn_pty: started in-process %s fake_pid=%d\n",
+	            job->nested ? "nested shell" : "zsh", (int)job->fake_pid);
 	return job->fake_pid;
 }
 
@@ -1011,6 +1308,9 @@ wwn_pty_ios_waitpid(pid_t fake_pid, int *exit_status, int flags)
 		return -1;
 	}
 	if (job->running) {
+		int wfd;
+		int si;
+
 		/*
 		 * In-process zsh has no async (SIGCHLD) exit notification, so a
 		 * polling WNOHANG caller must see "still running" without
@@ -1019,16 +1319,33 @@ wwn_pty_ios_waitpid(pid_t fake_pid, int *exit_status, int flags)
 		if (flags & WNOHANG)
 			return 0;
 		/*
-		 * Blocking reap (terminal closing): close the keyboard input
-		 * pipe first so zsh gets EOF on stdin and leaves its ZLE read
-		 * loop. Joining before EOF would deadlock against a shell parked
-		 * in read().
+		 * Blocking reap (terminal closing): EOF this session's keyboard
+		 * pipe so the shell leaves its read loop. Never close another
+		 * session's inject fd (that used to kill Foot when weston-terminal
+		 * exited).
 		 */
-		if (ios_pty_input_write >= 0) {
-			close(ios_pty_input_write);
-			ios_pty_input_write = -1;
+		wfd = job->input_write_fd;
+		if (wfd >= 0) {
+			pthread_mutex_lock(&ios_terminal_master_lock);
+			if (ios_pty_input_write == wfd) {
+				ios_pty_input_write = -1;
+				ios_pty_input_read = -1;
+			}
+			pthread_mutex_unlock(&ios_terminal_master_lock);
+			for (si = 0; si < WWN_IOS_MAX_PTYS; si++) {
+				if (ios_ptys[si].live && ios_ptys[si].input_write == wfd) {
+					ios_ptys[si].input_write = -1;
+					ios_close_fd(&ios_ptys[si].input_read);
+					ios_ptys[si].live = 0;
+					ios_ptys[si].master = -1;
+					ios_ptys[si].slave = -1;
+				}
+			}
+			close(wfd);
+			job->input_write_fd = -1;
 		}
 		pthread_join(job->thread, &rv);
+		ios_pty_retarget_focus();
 	}
 	if (exit_status != NULL)
 		*exit_status = job->exit_code;
@@ -1036,15 +1353,21 @@ wwn_pty_ios_waitpid(pid_t fake_pid, int *exit_status, int flags)
 		free(job->argv_storage[i]);
 	if (job->dylib != NULL)
 		dlclose(job->dylib);
-	if (ios_pty_input_write >= 0) {
-		close(ios_pty_input_write);
-		ios_pty_input_write = -1;
+	if (job->input_write_fd >= 0) {
+		int wfd = job->input_write_fd;
+		int s;
+
+		job->input_write_fd = -1;
+		for (s = 0; s < WWN_IOS_MAX_PTYS; s++) {
+			if (ios_ptys[s].live && ios_ptys[s].input_write == wfd)
+				ios_pty_release_slot(&ios_ptys[s]);
+		}
 	}
-	if (ios_pty_input_read >= 0) {
-		close(ios_pty_input_read);
-		ios_pty_input_read = -1;
-	}
+	ios_close_fd(&job->input_read_fd);
+	ios_close_fd(&job->slave_fd);
+	ios_close_fd(&job->pace_read_fd);
 	memset(job, 0, sizeof *job);
+	ios_pty_retarget_focus();
 	return fake_pid;
 }
 #endif
@@ -1243,7 +1566,7 @@ wwn_pty_set_winsize(int master_fd, const struct winsize *ws)
 		return 0;
 #if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
 	/* socketpair I/O fallback is not a TTY; ignore ENOTTY like macOS PTY shims. */
-	if (errno == ENOTTY)
+	if (errno == ENOTTY || errno == EINVAL || errno == ENODEV)
 		return 0;
 #endif
 	return -1;
@@ -1290,22 +1613,43 @@ wwn_pty_session_destroy(wwn_pty_session *session)
 }
 
 #if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
-static int ios_terminal_master = -1;
-
 void
 wwn_ios_terminal_set_master(int master_fd)
 {
+	struct ios_pty_slot *slot;
+
 	pthread_mutex_lock(&ios_terminal_master_lock);
 	ios_terminal_master = master_fd;
+	slot = ios_pty_slot_by_master(master_fd);
+	if (slot != NULL)
+		ios_pty_focus_slot(slot);
 	pthread_mutex_unlock(&ios_terminal_master_lock);
 }
 
 void
 wwn_ios_terminal_clear_master(int master_fd)
 {
+	int i;
+
 	pthread_mutex_lock(&ios_terminal_master_lock);
-	if (ios_terminal_master == master_fd)
+	if (ios_terminal_master == master_fd) {
+		struct ios_pty_slot *slot = ios_pty_slot_by_master(master_fd);
+
 		ios_terminal_master = -1;
+		if (slot != NULL && ios_pty_input_write == slot->input_write) {
+			ios_pty_input_write = -1;
+			ios_pty_input_read = -1;
+		}
+		for (i = 0; i < WWN_IOS_MAX_PTYS; i++) {
+			if (!ios_ptys[i].live || ios_ptys[i].input_write < 0)
+				continue;
+			if (ios_ptys[i].master == master_fd)
+				continue;
+			ios_pty_focus_slot(&ios_ptys[i]);
+			ios_terminal_master = ios_ptys[i].master;
+			break;
+		}
+	}
 	pthread_mutex_unlock(&ios_terminal_master_lock);
 }
 
