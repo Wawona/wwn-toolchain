@@ -137,6 +137,10 @@ wwn_mobile_spawn_thread(void *arg)
 	wwn_dispatch_async_worker = 0;
 	if (job->exit_code == WWN_DISPATCH_NOT_HANDLED)
 		job->exit_code = 127;
+	if (job->exit_code != 0) {
+		fprintf(stderr, "wawona-mobile-spawn: '%s' exited %d\n",
+		        job->argv[0] ? job->argv[0] : "?", job->exit_code);
+	}
 	fflush(stdout);
 	fflush(stderr);
 	pthread_mutex_lock(&mobile_spawn_lock);
@@ -237,13 +241,13 @@ wawona_dispatch_spawn_async(const char *path, char *const argv[],
 	(void)pthread_detach(job->thread);
 	{
 		const char *wd = getenv("WAYLAND_DISPLAY");
-		const char *nested = getenv("NIRI_NESTED_WAYLAND_DISPLAY");
+		const char *backend = getenv("NIRI_BACKEND");
 		fprintf(stderr,
 		        "wawona-mobile-spawn: started async '%s' "
-		        "WAYLAND_DISPLAY=%s NIRI_NESTED=%s\n",
+		        "WAYLAND_DISPLAY=%s NIRI_BACKEND=%s\n",
 		        probe,
 		        wd ? wd : "(null)",
-		        nested ? nested : "(null)");
+		        backend ? backend : "(null)");
 	}
 	return 0;
 }

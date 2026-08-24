@@ -147,6 +147,10 @@ extern int wwn_weston_compositor_is_running(void)
     __attribute__((weak));
 extern int niri_main(void)
     __attribute__((weak));
+extern int wwn_niri_main_is_running(void)
+    __attribute__((weak));
+extern int wwn_niri_main_already_used(void)
+    __attribute__((weak));
 
 /*
  * Provided by wwn-wasm (libwawona_wasm.a). Weak so watchOS and builds
@@ -233,6 +237,47 @@ wwn_weston_already_running(void)
 	if (wwn_weston_compositor_is_running == NULL)
 		return 0;
 	return wwn_weston_compositor_is_running() != 0;
+}
+
+static int
+wwn_niri_already_used(void)
+{
+	if (wwn_niri_main_already_used != NULL)
+		return wwn_niri_main_already_used() != 0;
+	if (wwn_niri_main_is_running == NULL)
+		return 0;
+	return wwn_niri_main_is_running() != 0;
+}
+
+static void
+wwn_print_niri_not_reentrant(void)
+{
+	int running = wwn_niri_main_is_running != NULL &&
+	    wwn_niri_main_is_running() != 0;
+
+	if (running) {
+		fprintf(stderr,
+		        "wawona: niri is already this process's compositor and "
+		        "cannot nest inside itself.\n");
+#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
+		fprintf(stderr,
+		        "  iOS cannot start a second niri process.\n"
+		        "  Start weston here to nest another compositor.\n");
+#elif defined(__ANDROID__)
+		fprintf(stderr,
+		        "  Android cannot start a second niri process.\n"
+		        "  Start weston here to nest another compositor.\n");
+#else
+		fprintf(stderr,
+		        "  Inner niri needs a separate process.\n");
+#endif
+	} else {
+		fprintf(stderr,
+		        "wawona: niri_main already ran in this process "
+		        "(not re-entrant).\n"
+		        "  Relaunch Wawona to start niri again.\n");
+	}
+	fflush(stderr);
 }
 
 static void
@@ -323,6 +368,8 @@ wwn_run_nested_weston(int argc, char **argv)
 static int
 wwn_run_nested_niri(void)
 {
+	int rc;
+
 	if (niri_main == NULL) {
 		fprintf(stderr,
 		        "wawona: niri is bundled but unavailable in this build.\n");
@@ -331,7 +378,14 @@ wwn_run_nested_niri(void)
 	}
 	unsetenv("WWN_MODEB_TTY");
 	setenv("NIRI_BACKEND", "nested", 1);
-	return niri_main();
+	if (!getenv("RUST_LOG") || !getenv("RUST_LOG")[0])
+		setenv("RUST_LOG", "niri=info,smithay::backend::egl=info", 0);
+	rc = niri_main();
+	if (rc != 0) {
+		fprintf(stderr, "wawona: nested niri exited %d\n", rc);
+		fflush(stderr);
+	}
+	return rc;
 }
 
 /*
@@ -731,14 +785,22 @@ wawona_dispatch_inprocess(const char *path, char *const argv[],
 	}
 
 	if (wwn_is_niri_name(name) && niri_main != NULL) {
+		if (wwn_niri_already_used()) {
+			wwn_print_niri_not_reentrant();
+			return 1;
+		}
+		unsetenv("WWN_MODEB_TTY");
+		setenv("NIRI_BACKEND", "nested", 1);
 #if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
 		if (!wwn_dispatch_async_worker &&
 		    wawona_dispatch_spawn_async(path, argv, envp) == 0) {
 			fprintf(stderr,
 			        "wawona: started niri nested on "
-			        "WAYLAND_DISPLAY=%s (detached)\n",
+			        "WAYLAND_DISPLAY=%s NIRI_BACKEND=%s (detached)\n",
 			        getenv("WAYLAND_DISPLAY") ?
-			            getenv("WAYLAND_DISPLAY") : "(null)");
+			            getenv("WAYLAND_DISPLAY") : "(null)",
+			        getenv("NIRI_BACKEND") ?
+			            getenv("NIRI_BACKEND") : "(null)");
 			fflush(stderr);
 			return 0;
 		}
