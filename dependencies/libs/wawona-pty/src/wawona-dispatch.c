@@ -143,6 +143,8 @@ extern int weston_terminal_main(int argc, char *argv[])
 /* Nested compositors: Wayland clients of the current WAYLAND_DISPLAY. */
 extern int weston_compositor_main(int argc, char *argv[])
     __attribute__((weak));
+extern int wwn_weston_compositor_is_running(void)
+    __attribute__((weak));
 extern int niri_main(void)
     __attribute__((weak));
 
@@ -226,6 +228,35 @@ wwn_is_niri_name(const char *name)
 }
 
 static int
+wwn_weston_already_running(void)
+{
+	if (wwn_weston_compositor_is_running == NULL)
+		return 0;
+	return wwn_weston_compositor_is_running() != 0;
+}
+
+static void
+wwn_print_weston_same_process_nest(void)
+{
+	fprintf(stderr,
+	        "wawona: weston is already this process's compositor and "
+	        "cannot nest inside itself.\n");
+#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
+	fprintf(stderr,
+	        "  iOS cannot start a second weston process.\n"
+	        "  Start niri here to nest another compositor.\n");
+#elif defined(__ANDROID__)
+	fprintf(stderr,
+	        "  Android cannot start a second weston process.\n"
+	        "  Start niri here to nest another compositor.\n");
+#else
+	fprintf(stderr,
+	        "  Inner weston needs a separate process.\n");
+#endif
+	fflush(stderr);
+}
+
+static int
 wwn_run_nested_weston(int argc, char **argv)
 {
 	int has_backend = 0;
@@ -237,6 +268,11 @@ wwn_run_nested_weston(int argc, char **argv)
 	char sockarg[64];
 	int rc;
 	static atomic_uint seq;
+
+	if (wwn_weston_already_running()) {
+		wwn_print_weston_same_process_nest();
+		return 1;
+	}
 
 	if (weston_compositor_main == NULL) {
 		fprintf(stderr,
@@ -670,6 +706,10 @@ wawona_dispatch_inprocess(const char *path, char *const argv[],
 
 	if (wwn_is_weston_compositor_name(name) &&
 	    weston_compositor_main != NULL) {
+		if (wwn_weston_already_running()) {
+			wwn_print_weston_same_process_nest();
+			return 1;
+		}
 #if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
 		if (!wwn_dispatch_async_worker &&
 		    wawona_dispatch_spawn_async(path, argv, envp) == 0) {
