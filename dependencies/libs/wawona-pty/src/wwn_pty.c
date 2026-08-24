@@ -958,7 +958,10 @@ ios_nested_shell_thread(void *arg)
 	struct wwn_ios_shell_job *job = arg;
 	char line[1024];
 	size_t llen = 0;
-	const char *prompt = "wawona-nested % ";
+	/* zsh_main is not re-entrant, so extra PTYs cannot run ZLE. Match the
+	 * iOS .zshrc prompt (`PROMPT='%F{cyan}%~%f %# '`) instead of a product
+	 * label. Home is the sandbox cwd for this fallback. */
+	const char *prompt = "\033[36m~\033[0m % ";
 
 	WWN_PTY_LOG("wwn_pty: nested in-process shell pid=%d (zsh stays on first PTY)\n",
 	            (int)job->fake_pid);
