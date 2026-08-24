@@ -34,6 +34,7 @@
 #include <stdio.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <stdatomic.h>
 #if defined(__APPLE__)
 #include <TargetConditionals.h>
 #endif
@@ -139,6 +140,12 @@ extern int constraints_main(int argc, char *argv[])
 extern int weston_terminal_main(int argc, char *argv[])
     __attribute__((weak));
 
+/* Nested compositors: Wayland clients of the current WAYLAND_DISPLAY. */
+extern int weston_compositor_main(int argc, char *argv[])
+    __attribute__((weak));
+extern int niri_main(void)
+    __attribute__((weak));
+
 /*
  * Provided by wwn-wasm (libwawona_wasm.a). Weak so watchOS and builds
  * without the runtime still link. Never add a strong stub — that would
@@ -204,6 +211,91 @@ static int
 wwn_is_scp_name(const char *name)
 {
 	return name != NULL && strcmp(name, "scp") == 0;
+}
+
+static int
+wwn_is_weston_compositor_name(const char *name)
+{
+	return name != NULL && strcmp(name, "weston") == 0;
+}
+
+static int
+wwn_is_niri_name(const char *name)
+{
+	return name != NULL && strcmp(name, "niri") == 0;
+}
+
+static int
+wwn_run_nested_weston(int argc, char **argv)
+{
+	int has_backend = 0;
+	int has_socket = 0;
+	int has_shell = 0;
+	int i;
+	int nargc;
+	char **nargv;
+	char sockarg[64];
+	int rc;
+	static atomic_uint seq;
+
+	if (weston_compositor_main == NULL) {
+		fprintf(stderr,
+		        "wawona: weston is bundled but unavailable in this build.\n");
+		fflush(stderr);
+		return 127;
+	}
+
+	unsetenv("WWN_MODEB_TTY");
+	for (i = 1; i < argc; i++) {
+		if (strncmp(argv[i], "--backend", 9) == 0 ||
+		    strcmp(argv[i], "-B") == 0)
+			has_backend = 1;
+		if (strncmp(argv[i], "--socket", 8) == 0)
+			has_socket = 1;
+		if (strncmp(argv[i], "--shell", 7) == 0)
+			has_shell = 1;
+	}
+
+	nargc = argc;
+	if (!has_backend)
+		nargc++;
+	if (!has_socket)
+		nargc++;
+	if (!has_shell)
+		nargc++;
+	nargv = calloc((size_t)nargc + 1, sizeof(*nargv));
+	if (nargv == NULL)
+		return 1;
+	for (i = 0; i < argc; i++)
+		nargv[i] = argv[i];
+	nargc = argc;
+	if (!has_backend)
+		nargv[nargc++] = "--backend=wayland";
+	if (!has_shell)
+		nargv[nargc++] = "--shell=desktop-shell.so";
+	if (!has_socket) {
+		snprintf(sockarg, sizeof sockarg, "--socket=weston-inproc-%u",
+		         (unsigned)atomic_fetch_add(&seq, 1u));
+		nargv[nargc++] = sockarg;
+	}
+	nargv[nargc] = NULL;
+	rc = weston_compositor_main(nargc, nargv);
+	free(nargv);
+	return rc;
+}
+
+static int
+wwn_run_nested_niri(void)
+{
+	if (niri_main == NULL) {
+		fprintf(stderr,
+		        "wawona: niri is bundled but unavailable in this build.\n");
+		fflush(stderr);
+		return 127;
+	}
+	unsetenv("WWN_MODEB_TTY");
+	setenv("NIRI_BACKEND", "nested", 1);
+	return niri_main();
 }
 
 /*
@@ -391,6 +483,8 @@ wwn_run_help(int argc, char *const argv[])
 	wwn_print_linked("scp", scp_main != NULL);
 	wwn_print_linked("fuzzel", fuzzel_main != NULL);
 	wwn_print_linked("foot", foot_main != NULL);
+	wwn_print_linked("weston", weston_compositor_main != NULL);
+	wwn_print_linked("niri", niri_main != NULL);
 	for (i = 0; i < WWN_WAYLAND_CLIENTS_N; i++) {
 		if (wwn_wayland_clients[i].fn != NULL)
 			wwn_print_linked(wwn_wayland_clients[i].name, 1);
@@ -455,6 +549,10 @@ wawona_dispatch_can_handle(const char *argv0)
 	if (strcmp(name, "fuzzel") == 0 && fuzzel_main != NULL)
 		return 1;
 	if (strcmp(name, "foot") == 0 && foot_main != NULL)
+		return 1;
+	if (wwn_is_weston_compositor_name(name) && weston_compositor_main != NULL)
+		return 1;
+	if (wwn_is_niri_name(name) && niri_main != NULL)
 		return 1;
 	if (wwn_is_waypipe_name(name) && waypipe_main != NULL)
 		return 1;
@@ -565,6 +663,47 @@ wawona_dispatch_inprocess(const char *path, char *const argv[],
 		while (argv[argc] != NULL)
 			argc++;
 		rc = foot_main(argc, argv);
+		fflush(stdout);
+		fflush(stderr);
+		return rc;
+	}
+
+	if (wwn_is_weston_compositor_name(name) &&
+	    weston_compositor_main != NULL) {
+#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
+		if (!wwn_dispatch_async_worker &&
+		    wawona_dispatch_spawn_async(path, argv, envp) == 0) {
+			fprintf(stderr,
+			        "wawona: started weston nested on "
+			        "WAYLAND_DISPLAY=%s (detached)\n",
+			        getenv("WAYLAND_DISPLAY") ?
+			            getenv("WAYLAND_DISPLAY") : "(null)");
+			fflush(stderr);
+			return 0;
+		}
+#endif
+		while (argv[argc] != NULL)
+			argc++;
+		rc = wwn_run_nested_weston(argc, argv);
+		fflush(stdout);
+		fflush(stderr);
+		return rc;
+	}
+
+	if (wwn_is_niri_name(name) && niri_main != NULL) {
+#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
+		if (!wwn_dispatch_async_worker &&
+		    wawona_dispatch_spawn_async(path, argv, envp) == 0) {
+			fprintf(stderr,
+			        "wawona: started niri nested on "
+			        "WAYLAND_DISPLAY=%s (detached)\n",
+			        getenv("WAYLAND_DISPLAY") ?
+			            getenv("WAYLAND_DISPLAY") : "(null)");
+			fflush(stderr);
+			return 0;
+		}
+#endif
+		rc = wwn_run_nested_niri();
 		fflush(stdout);
 		fflush(stderr);
 		return rc;
