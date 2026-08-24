@@ -108,6 +108,8 @@ extern int scp_main(int argc, char *argv[])
  */
 extern int weston_simple_shm_main(int argc, char *argv[])
     __attribute__((weak));
+extern int simple_egl_main(int argc, char *argv[])
+    __attribute__((weak));
 extern int flower_main(int argc, char *argv[])
     __attribute__((weak));
 extern int clickdot_main(int argc, char *argv[])
@@ -222,6 +224,7 @@ typedef struct {
  */
 static const wwn_wayland_entry_t wwn_wayland_clients[] = {
 	{ "weston-simple-shm", (wwn_client_fn)weston_simple_shm_main },
+	{ "weston-simple-egl", (wwn_client_fn)simple_egl_main },
 	{ "weston-flower",     (wwn_client_fn)flower_main     },
 	{ "weston-clickdot",   (wwn_client_fn)clickdot_main   },
 	{ "weston-smoke",      (wwn_client_fn)smoke_main      },
@@ -241,8 +244,8 @@ static const wwn_wayland_entry_t wwn_wayland_clients[] = {
 #define WWN_WAYLAND_CLIENTS_N \
 	(sizeof(wwn_wayland_clients) / sizeof(wwn_wayland_clients[0]))
 
-static wwn_client_fn
-wwn_lookup_wayland_client(const char *name)
+static const wwn_wayland_entry_t *
+wwn_find_wayland_client(const char *name)
 {
 	size_t i;
 
@@ -250,7 +253,7 @@ wwn_lookup_wayland_client(const char *name)
 		return NULL;
 	for (i = 0; i < WWN_WAYLAND_CLIENTS_N; i++) {
 		if (strcmp(name, wwn_wayland_clients[i].name) == 0)
-			return wwn_wayland_clients[i].fn;
+			return &wwn_wayland_clients[i];
 	}
 	return NULL;
 }
@@ -463,7 +466,7 @@ wawona_dispatch_can_handle(const char *argv0)
 		return 1;
 	if (wwn_is_scp_name(name) && scp_main != NULL)
 		return 1;
-	if (wwn_lookup_wayland_client(name) != NULL)
+	if (wwn_find_wayland_client(name) != NULL)
 		return 1;
 	if (wawona_coreutils_main == NULL)
 		return 0;
@@ -613,9 +616,18 @@ wawona_dispatch_inprocess(const char *path, char *const argv[],
 	}
 
 	{
-		wwn_client_fn wfn = wwn_lookup_wayland_client(name);
+		const wwn_wayland_entry_t *ent = wwn_find_wayland_client(name);
 
-		if (wfn != NULL) {
+		if (ent != NULL) {
+			wwn_client_fn wfn = ent->fn;
+
+			if (wfn == NULL) {
+				fprintf(stderr,
+				        "wawona: '%s' is bundled but unavailable in this build.\n",
+				        name);
+				fflush(stderr);
+				return 127;
+			}
 #if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
 			/*
 			 * Detach Wayland toy clients from the zsh PTY thread so the
