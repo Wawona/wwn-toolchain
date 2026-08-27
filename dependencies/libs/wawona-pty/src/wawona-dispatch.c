@@ -80,6 +80,10 @@ extern int foot_main(int argc, char *argv[])
 extern int waypipe_main(int argc, char *argv[])
     __attribute__((weak));
 
+/* Provided by wwn-ish (libish.a, desktop CLI main patched to compile as part of libish and renamed to ish_main). */
+extern int ish_main(int argc, char *argv[])
+    __attribute__((weak));
+
 /*
  * SSH CLI entry points (ssh / ssh-keygen / scp).
  * Apple mobile: strong refs to libwwn-ssh-cli.a (wwn-ssh libssh2 CLI). Darwin
@@ -308,6 +312,8 @@ wawona_dispatch_can_handle(const char *argv0)
 	if (strcmp(name, "fuzzel") == 0 && fuzzel_main != NULL)
 		return 1;
 	if (strcmp(name, "foot") == 0 && foot_main != NULL)
+		return 1;
+	if (strcmp(name, "ish") == 0 && ish_main != NULL)
 		return 1;
 	if (wwn_is_waypipe_name(name) && waypipe_main != NULL)
 		return 1;
