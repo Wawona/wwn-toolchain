@@ -375,6 +375,15 @@ wawona_dispatch_inprocess(const char *path, char *const argv[],
 		return rc;
 	}
 
+	if (strcmp(name, "ish") == 0 && ish_main != NULL) {
+		while (argv[argc] != NULL)
+			argc++;
+		rc = ish_main(argc, argv);
+		fflush(stdout);
+		fflush(stderr);
+		return rc;
+	}
+
 	if (strcmp(name, "foot") == 0 && foot_main != NULL) {
 #if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH || TARGET_OS_VISION)
 		if (!wwn_dispatch_async_worker &&
