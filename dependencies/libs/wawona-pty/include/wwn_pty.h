@@ -37,6 +37,7 @@ void wwn_ios_terminal_set_master(int master_fd);
 void wwn_ios_terminal_clear_master(int master_fd);
 int wwn_ios_terminal_is_active(void);
 ssize_t wwn_ios_terminal_inject(const void *buf, size_t len);
+size_t wwn_pty_ios_live_masters(int *masters, size_t capacity);
 
 /*
  * After an intentional client stop / soft-exit, allow another in-process shell

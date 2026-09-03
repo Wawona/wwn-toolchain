@@ -1689,6 +1689,24 @@ wwn_ios_terminal_is_active(void)
 	return ios_any_shell_running();
 }
 
+size_t
+wwn_pty_ios_live_masters(int *masters, size_t capacity)
+{
+	size_t count = 0;
+	int i;
+
+	pthread_mutex_lock(&ios_terminal_master_lock);
+	for (i = 0; i < WWN_IOS_MAX_PTYS; i++) {
+		if (!ios_ptys[i].live || ios_ptys[i].master < 0)
+			continue;
+		if (masters != NULL && count < capacity)
+			masters[count] = ios_ptys[i].master;
+		count++;
+	}
+	pthread_mutex_unlock(&ios_terminal_master_lock);
+	return count;
+}
+
 ssize_t
 wwn_ios_terminal_inject(const void *buf, size_t len)
 {
