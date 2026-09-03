@@ -1542,6 +1542,26 @@ wwn_pty_session_start(const char *shell_path, char *const argv[],
 	return session;
 }
 
+int
+wwn_pty_session_master_fd(const wwn_pty_session *session)
+{
+	if (session == NULL) {
+		errno = EINVAL;
+		return -1;
+	}
+	return session->master_fd;
+}
+
+pid_t
+wwn_pty_session_pid(const wwn_pty_session *session)
+{
+	if (session == NULL) {
+		errno = EINVAL;
+		return -1;
+	}
+	return session->pid;
+}
+
 ssize_t
 wwn_pty_read(int master_fd, void *buf, size_t len)
 {

@@ -103,6 +103,10 @@ wwn_pty_session *wwn_pty_session_start(const char *shell_path,
                                        char *const envp[],
                                        const struct winsize *ws);
 
+int wwn_pty_session_master_fd(const wwn_pty_session *session);
+
+pid_t wwn_pty_session_pid(const wwn_pty_session *session);
+
 ssize_t wwn_pty_read(int master_fd, void *buf, size_t len);
 ssize_t wwn_pty_write(int master_fd, const void *buf, size_t len);
 
