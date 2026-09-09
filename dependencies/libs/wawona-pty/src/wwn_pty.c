@@ -31,6 +31,8 @@
 #include <time.h>
 
 extern int wawona_zsh_main(int argc, char **argv);
+extern void wawona_wasm_request_interrupt(void) __attribute__((weak));
+extern int wawona_wasm_is_running(void) __attribute__((weak));
 #endif
 
 extern char **environ;
@@ -642,6 +644,18 @@ ios_deliver_shell_tty_signal(unsigned char byte)
 		sig = SIGQUIT;
 	else
 		return 0;
+
+	/* Cooperative guest stop. Do not pthread_kill the zsh thread while
+	 * wasm is on that stack (handler / process abort). Closing the
+	 * guest Wayland sockets drops its GUI toplevel. */
+	if (wawona_wasm_request_interrupt != NULL)
+		wawona_wasm_request_interrupt();
+	if (wawona_wasm_is_running != NULL && wawona_wasm_is_running() != 0) {
+		WWN_PTY_LOG(
+		        "wwn_pty: wasm interrupt for control byte 0x%02x (skip pthread_kill)\n",
+		        byte);
+		return 1;
+	}
 
 	pthread_mutex_lock(&ios_terminal_master_lock);
 	inject_fd = ios_pty_input_write;

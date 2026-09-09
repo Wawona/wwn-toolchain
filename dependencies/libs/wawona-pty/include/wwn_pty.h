@@ -62,8 +62,10 @@ void wwn_pty_ios_stop_shell_session(void);
  * The zsh exec hook calls this before it would otherwise fork/exec an external
  * binary. If argv[0]'s basename is in the in-process safe subset and the
  * statically-linked uutils umbrella provides it, the utility runs in-process
- * and its exit code (>= 0) is returned. Otherwise WWN_DISPATCH_NOT_HANDLED is
- * returned and the caller falls through to its normal not-found handling.
+ * and its exit code (>= 0) is returned. If the name is unknown,
+ * WWN_DISPATCH_NOT_HANDLED is returned and the zsh exec hook interprets
+ * user shell scripts in-process (`source` / `sh -c`) or prints not-found.
+ * Mach-O/ELF is refused there (Guideline 2.5.2). Native exec never runs.
  *
  * envp is advisory: the in-process model shares the host environ, and zsh
  * applies any `VAR=val cmd` assignments to environ before calling us.

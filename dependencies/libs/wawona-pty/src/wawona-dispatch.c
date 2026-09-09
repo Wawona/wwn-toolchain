@@ -453,7 +453,7 @@ static const char *const wwn_safe_subset[] = {
 	"stat",    "du",      "df",       "date",     "env",
 	"printenv","uname",   "whoami",   "yes",      "tee",
 	"nl",      "tac",     "fold",     "expand",   "unexpand",
-	"truncate",
+	"truncate","chmod",
 };
 
 static const char *
@@ -494,6 +494,20 @@ wwn_is_help_name(const char *name)
 	return name != NULL
 	    && (strcmp(name, "help") == 0
 	        || strcmp(name, "wawona") == 0);
+}
+
+/* PATH names for the in-process interpreter. can_handle claims them so
+ * hashcmd / spawn probes treat zsh/sh as real commands. dispatch_inprocess
+ * must return NOT_HANDLED so the zsh script hook (wwn_try_run_shell_script)
+ * sources user scripts instead of treating these as uutils. */
+static int
+wwn_is_shell_interpreter_name(const char *name)
+{
+	return name != NULL
+	    && (strcmp(name, "sh") == 0
+	        || strcmp(name, "zsh") == 0
+	        || strcmp(name, "bash") == 0
+	        || strcmp(name, "dash") == 0);
 }
 
 static int
@@ -540,12 +554,17 @@ wwn_run_help(int argc, char *const argv[])
 
 	(void)argc;
 	(void)argv;
-	fprintf(stdout, "Wawona in-process shell — type a name; there is no fork/exec.\n");
+	fprintf(stdout, "Wawona in-process shell. Type a name; there is no fork/exec of Mach-O.\n");
 	fprintf(stdout, "Milestone: Support WASI P1 P2 WASM!  https://github.com/Wawona/Wawona/milestone/2\n\n");
 
 	fprintf(stdout, "Builtins (zsh):\n");
 	fprintf(stdout, "  cd  export  alias  unalias  setopt  unsetopt  echo  print  pwd\n");
 	fprintf(stdout, "  true  false  test  [  source  .  exit  return  jobs  fg  bg\n\n");
+
+	fprintf(stdout, "Shell scripts (interpreted by bundled zsh; not native exec):\n");
+	fprintf(stdout, "  ./file.sh   file.sh   /abs/path/file.sh\n");
+	fprintf(stdout, "  chmod +x file.sh && ./file.sh\n");
+	fprintf(stdout, "  sh file.sh    source file.sh    sh -c 'echo hi'\n\n");
 
 	fprintf(stdout, "Catalog command:\n");
 	fprintf(stdout, "  help, wawona          this list\n");
@@ -583,16 +602,17 @@ wwn_run_help(int argc, char *const argv[])
 
 	fprintf(stdout, "WASM / WASI (user .wasm documents; not Apple-signed):\n");
 	if (wawona_wasm_run != NULL) {
-		fprintf(stdout, "  wasm <file.wasm> [args]   run WASI P1 or P2\n");
+		fprintf(stdout, "  ./file.wasm [args]        run by path (same as a +x binary on macOS)\n");
+		fprintf(stdout, "  file.wasm [args]         cwd / PATH (no wasm prefix)\n");
+		fprintf(stdout, "  wasm <file.wasm> [args]   same, explicit Runtime command\n");
 		fprintf(stdout, "  wasm <package> [args]     run installed Runtime package\n");
-		fprintf(stdout, "  ./file.wasm [args]        same, by magic \\\\0asm\n");
 		fprintf(stdout, "  Drop .wasm into the Wawona Files / Documents folder.\n");
 	} else {
-		fprintf(stdout, "  coming — wwn-wasm is not linked in this build.\n");
+		fprintf(stdout, "  coming. wwn-wasm is not linked in this build.\n");
 		fprintf(stdout, "  See https://github.com/Wawona/Wawona/issues/146\n");
 	}
 	if (wpm_main != NULL) {
-		fprintf(stdout, "\nRuntime packages (wpm — Mode A registry + local store):\n");
+		fprintf(stdout, "\nRuntime packages (wpm. Mode A registry + local store):\n");
 		fprintf(stdout, "  wpm install ./file.wasm   register a local .wasm\n");
 		fprintf(stdout, "  wpm install <name>        from repo.wawona.io/wasm\n");
 		fprintf(stdout, "  wpm list | search | remove <name>\n");
@@ -622,6 +642,8 @@ wawona_dispatch_can_handle(const char *argv0)
 
 	if (name == NULL || name[0] == '\0')
 		return 0;
+	if (wwn_is_shell_interpreter_name(name))
+		return 1;
 	if (wwn_is_help_name(name))
 		return 1;
 	if (strcmp(name, "clear") == 0)
@@ -681,6 +703,10 @@ wawona_dispatch_inprocess(const char *path, char *const argv[],
 	if (name == NULL || name[0] == '\0')
 		name = wwn_basename(path);
 	if (name == NULL || name[0] == '\0')
+		return WWN_DISPATCH_NOT_HANDLED;
+
+	/* Interpreter names are not uutils. The zsh exec hook sources scripts. */
+	if (wwn_is_shell_interpreter_name(name))
 		return WWN_DISPATCH_NOT_HANDLED;
 
 	if (wwn_is_help_name(name)) {
