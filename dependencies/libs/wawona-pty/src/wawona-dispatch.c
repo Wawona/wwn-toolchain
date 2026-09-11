@@ -46,6 +46,14 @@
  * spawning another detached worker (would recurse forever).
  */
 _Thread_local int wwn_dispatch_async_worker;
+
+static int
+wwn_finish_inproc_cmd(int rc)
+{
+	if (wwn_pty_ios_end_inproc_cmd() && rc != WWN_DISPATCH_NOT_HANDLED)
+		return 130;
+	return rc;
+}
 #endif
 
 /*
@@ -632,7 +640,17 @@ wwn_run_wasm(int argc, char *argv[])
 		fflush(stdout);
 		return 127;
 	}
+#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
+	{
+		int rc;
+
+		wwn_pty_ios_begin_inproc_cmd();
+		rc = wawona_wasm_run(argc, argv);
+		return wwn_finish_inproc_cmd(rc);
+	}
+#else
 	return wawona_wasm_run(argc, argv);
+#endif
 }
 
 int
@@ -930,12 +948,18 @@ wawona_dispatch_inprocess(const char *path, char *const argv[],
 
 	/* The utility writes to the inherited stdout/stderr (the PTY slave). */
 	wwn_dispatch_sync_terminal_size_env();
+#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
+	wwn_pty_ios_begin_inproc_cmd();
+#endif
 	rc = wawona_coreutils_main(argc, (const char *const *)argv);
 
 	/* Flush so output orders correctly relative to the next zsh prompt. */
 	fflush(stdout);
 	fflush(stderr);
 
+#if defined(__APPLE__) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH)
+	rc = wwn_finish_inproc_cmd(rc);
+#endif
 	/* Rust returns its own NOT_HANDLED sentinel when the util is unknown. */
 	return rc;
 }

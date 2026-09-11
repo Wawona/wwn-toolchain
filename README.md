@@ -28,6 +28,18 @@ graphics-stack keys (iland/weston/kmscube; ANGLE/SwiftShader/Vulkan ICDs) into
 cairo depends on it. ANGLE/SwiftShader recipes have moved to `wwn-iland`;
 do not restore them here. Canonical: `Wawona/docs/wwn-repo-dag.md`.
 
+## Flake inputs (build tooling)
+
+| Input | Role |
+|-------|------|
+| `nixpkgs` | Substrate packages |
+| `rust-overlay` | Rust toolchains for cross recipes |
+| `crate2nix` | Per-crate Nix derivations for Rust consumers (Relay, eventually L4). Not a graphics fragment. |
+| `android-nixpkgs` | Android SDK / NDK pins |
+
+L3′ Relay pins with `crate2nix.follows = "wwn-toolchain/crate2nix"` so one L0 tip
+owns the crate2nix revision.
+
 ## Use
 
 ```nix

@@ -40,6 +40,15 @@ ssize_t wwn_ios_terminal_inject(const void *buf, size_t len);
 size_t wwn_pty_ios_live_masters(int *masters, size_t capacity);
 
 /*
+ * In-process job interrupt (VINTR / SIGINT). A fake PTY has no kernel
+ * ISIG, and uutils write_all retries EINTR, so Ctrl+C must fail stdio
+ * while a dispatched command is on the zsh thread. begin/end bracket
+ * wawona_dispatch_inprocess work. take/end returns 1 if VINTR fired.
+ */
+void wwn_pty_ios_begin_inproc_cmd(void);
+int wwn_pty_ios_end_inproc_cmd(void);
+
+/*
  * After an intentional client stop / soft-exit, allow another in-process shell
  * spawn in this address space. Does nothing while a shell job is still marked
  * running. Prefer wwn_pty_ios_stop_shell_session() on Stop. The first job is

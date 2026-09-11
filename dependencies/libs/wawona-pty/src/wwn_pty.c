@@ -29,6 +29,7 @@
 #include <dlfcn.h>
 #include <sys/filio.h>
 #include <time.h>
+#include <stdatomic.h>
 
 extern int wawona_zsh_main(int argc, char **argv);
 extern void wawona_wasm_request_interrupt(void) __attribute__((weak));
@@ -489,6 +490,42 @@ static pthread_mutex_t ios_stdio_lock = PTHREAD_MUTEX_INITIALIZER;
  */
 static pthread_t ios_shell_io_thread;
 static int ios_shell_io_active;
+static _Atomic int ios_inproc_cmd_active;
+static _Atomic int ios_tty_interrupt;
+static int ios_tty_isig_enabled(void);
+
+void
+wwn_pty_ios_begin_inproc_cmd(void)
+{
+	atomic_store(&ios_tty_interrupt, 0);
+	atomic_store(&ios_inproc_cmd_active, 1);
+}
+
+int
+wwn_pty_ios_end_inproc_cmd(void)
+{
+	int hit;
+
+	atomic_store(&ios_inproc_cmd_active, 0);
+	hit = atomic_exchange(&ios_tty_interrupt, 0);
+	return hit != 0;
+}
+
+static int
+ios_inproc_stdio_interrupted(int fd)
+{
+	if (atomic_load(&ios_tty_interrupt) == 0)
+		return 0;
+	if (atomic_load(&ios_inproc_cmd_active) == 0)
+		return 0;
+	if (!ios_shell_io_active)
+		return 0;
+	if (!pthread_equal(pthread_self(), ios_shell_io_thread))
+		return 0;
+	if (fd != STDIN_FILENO && fd != STDOUT_FILENO)
+		return 0;
+	return 1;
+}
 
 static void
 ios_close_fd(int *fdp)
@@ -628,6 +665,70 @@ ios_any_shell_running(void)
 	return running;
 }
 
+/*
+ * Empty handler without SA_RESTART. Used only to interrupt a blocking
+ * WASI stdin/poll read while wasm sits on the shell pthread. Do not use
+ * SIGINT: zsh's handler can abort the process when wasm is on that stack.
+ */
+static void
+ios_wasm_wake_nop(int signo)
+{
+	(void)signo;
+}
+
+static void
+ios_ensure_wasm_wake_handler(void)
+{
+	static atomic_int armed;
+	struct sigaction sa;
+
+	if (atomic_load(&armed) != 0)
+		return;
+	memset(&sa, 0, sizeof sa);
+	sa.sa_handler = ios_wasm_wake_nop;
+	(void)sigaction(SIGUSR1, &sa, NULL);
+	atomic_store(&armed, 1);
+}
+
+static int
+ios_wake_shell_thread_for_wasm(void)
+{
+	int i;
+	pthread_t target = 0;
+	int found = 0;
+	int inject_fd;
+
+	ios_ensure_wasm_wake_handler();
+
+	pthread_mutex_lock(&ios_terminal_master_lock);
+	inject_fd = ios_pty_input_write;
+	pthread_mutex_unlock(&ios_terminal_master_lock);
+
+	pthread_mutex_lock(&ios_shell_jobs_lock);
+	for (i = 0; i < WWN_IOS_MAX_SHELL_JOBS; i++) {
+		if (!ios_shell_jobs[i].running)
+			continue;
+		if (inject_fd >= 0 &&
+		    ios_shell_jobs[i].input_write_fd == inject_fd) {
+			if (!ios_shell_jobs[i].nested) {
+				target = ios_shell_jobs[i].thread;
+				found = 1;
+			}
+			break;
+		}
+	}
+	if (!found && ios_shell_io_active) {
+		target = ios_shell_io_thread;
+		found = 1;
+	}
+	pthread_mutex_unlock(&ios_shell_jobs_lock);
+
+	if (!found)
+		return 0;
+	(void)pthread_kill(target, SIGUSR1);
+	return 1;
+}
+
 static int
 ios_deliver_shell_tty_signal(unsigned char byte)
 {
@@ -645,17 +746,34 @@ ios_deliver_shell_tty_signal(unsigned char byte)
 	else
 		return 0;
 
-	/* Cooperative guest stop. Do not pthread_kill the zsh thread while
-	 * wasm is on that stack (handler / process abort). Closing the
-	 * guest Wayland sockets drops its GUI toplevel. */
+	/* Cooperative guest stop. Do not pthread_kill(SIGINT) while wasm is
+	 * on the zsh stack (handler / process abort). Epoch + socket
+	 * shutdown stop the interpreter / GUI; SIGUSR1 only wakes a
+	 * blocking WASI stdin read so the epoch trap can run. */
 	if (wawona_wasm_request_interrupt != NULL)
 		wawona_wasm_request_interrupt();
 	if (wawona_wasm_is_running != NULL && wawona_wasm_is_running() != 0) {
+		int woke;
+
+		atomic_store(&ios_tty_interrupt, 1);
+		woke = ios_wake_shell_thread_for_wasm();
 		WWN_PTY_LOG(
-		        "wwn_pty: wasm interrupt for control byte 0x%02x (skip pthread_kill)\n",
-		        byte);
+		        "wwn_pty: wasm interrupt for control byte 0x%02x (SIGUSR1 wake=%d)\n",
+		        byte, woke);
 		return 1;
 	}
+
+	/* ZLE raw mode clears ISIG. Then VINTR is a byte, not a signal.
+	 * A dispatched in-process command (yes/cat/wasm) must stop even if
+	 * ZLE left the fake tty in raw mode. */
+	if (!ios_tty_isig_enabled() &&
+	    atomic_load(&ios_inproc_cmd_active) == 0) {
+		WWN_PTY_LOG(
+		        "wwn_pty: control byte 0x%02x passed to ZLE (ISIG off)\n",
+		        byte);
+		return 0;
+	}
+	atomic_store(&ios_tty_interrupt, 1);
 
 	pthread_mutex_lock(&ios_terminal_master_lock);
 	inject_fd = ios_pty_input_write;
@@ -1824,6 +1942,13 @@ wwn_init_fake_termios(void)
 	wwn_fake_termios_init = true;
 }
 
+static int
+ios_tty_isig_enabled(void)
+{
+	wwn_init_fake_termios();
+	return (wwn_fake_termios.c_lflag & ISIG) != 0;
+}
+
 static ssize_t
 wwn_read(int fd, void *buf, size_t count)
 {
@@ -1843,7 +1968,16 @@ wwn_read(int fd, void *buf, size_t count)
 		return -1;
 	}
 
+	if (ios_inproc_stdio_interrupted(fd)) {
+		errno = EIO;
+		return -1;
+	}
+
 	n = real_read(fd, buf, count);
+	if (ios_inproc_stdio_interrupted(fd)) {
+		errno = EIO;
+		return -1;
+	}
 	if (wwn_fake_tty_active() && ios_shell_io_active &&
 	    pthread_equal(pthread_self(), ios_shell_io_thread) && n > 0 &&
 	    (fd == STDIN_FILENO || fd == STDOUT_FILENO)) {
@@ -1864,6 +1998,11 @@ wwn_write(int fd, const void *buf, size_t count)
 	real_write = (ssize_t (*)(int, const void *, size_t))dlsym(RTLD_NEXT, "write");
 	if (real_write == NULL) {
 		errno = ENOSYS;
+		return -1;
+	}
+
+	if (ios_inproc_stdio_interrupted(fd)) {
+		errno = EIO;
 		return -1;
 	}
 

@@ -1,4 +1,4 @@
-{ lib, pkgs, TEAM_ID ? null, deploymentTarget ? "17.0", xcodeBaseDir ? null, allowedXcodeVersions ? [ ] }:
+{ lib, pkgs, TEAM_ID ? null, deploymentTarget ? "11.0", xcodeBaseDir ? null, allowedXcodeVersions ? [ ] }:
 
 let
   xcodeenv = import ./xcodeenv {
