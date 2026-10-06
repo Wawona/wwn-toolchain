@@ -14,9 +14,7 @@
  *     simply report WWN_DISPATCH_NOT_HANDLED, so libwwn-pty.a stays
  *     self-contained even though it is -force_load'd.
  *   - fastfetch_main is weak: absent when libfastfetch.a is not force-loaded.
-     *     Keep in-process client names in sync with Wawona bundling (wwn-fastfetch).
-     *   - wawona_nvim_main is weak: absent when libwawona-neovim.a is not force-loaded.
-     *     Keep in-process editor names in sync with Wawona bundling (wwn-neovim).
+ *     Keep in-process client names in sync with Wawona bundling (wwn-fastfetch).
  *   - waypipe_main is weak: absent when libwawona.a is built without waypipe-ssh.
  *     Uses in-process libssh2 for Wayland forwarding over SSH.
  *   - ssh_main / ssh_keygen_main / scp_main are weak: absent when
