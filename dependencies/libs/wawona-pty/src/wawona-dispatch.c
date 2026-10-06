@@ -76,10 +76,6 @@ extern int phoon_main(int argc, char *argv[])
 extern int wpm_main(int argc, char *argv[])
 	__attribute__((weak));
 
-/* Provided by wwn-neovim (libwawona-neovim.a, main renamed to wawona_nvim_main). */
-extern int wawona_nvim_main(int argc, char *argv[])
-    __attribute__((weak));
-
 /* Provided by wwn-niri fuzzel port (libfuzzel.a, main renamed to fuzzel_main). */
 extern int fuzzel_main(int argc, char *argv[])
     __attribute__((weak));
@@ -190,14 +186,6 @@ wwn_dispatch_sync_terminal_size_env(void)
 #endif
 }
 
-static int
-wwn_is_nvim_name(const char *name)
-{
-	return name != NULL
-	    && (strcmp(name, "nvim") == 0
-	        || strcmp(name, "vi") == 0
-	        || strcmp(name, "vim") == 0);
-}
 
 static int
 wwn_is_waypipe_name(const char *name)
@@ -593,7 +581,6 @@ wwn_run_help(int argc, char *const argv[])
 	fprintf(stdout, "Bundled clients (linked in this binary):\n");
 	wwn_print_linked("fastfetch", fastfetch_main != NULL);
 	wwn_print_linked("phoon", phoon_main != NULL);
-	wwn_print_linked("nvim / vi / vim", wawona_nvim_main != NULL);
 	wwn_print_linked("waypipe", waypipe_main != NULL);
 	wwn_print_linked("ssh", ssh_main != NULL);
 	wwn_print_linked("ssh-keygen", ssh_keygen_main != NULL);
@@ -685,8 +672,6 @@ wawona_dispatch_can_handle(const char *argv0)
 	if (wwn_is_niri_name(name) && niri_main != NULL)
 		return 1;
 	if (wwn_is_waypipe_name(name) && waypipe_main != NULL)
-		return 1;
-	if (wwn_is_nvim_name(name) && wawona_nvim_main != NULL)
 		return 1;
 	if (wwn_is_ssh_name(name) && ssh_main != NULL)
 		return 1;
@@ -864,14 +849,6 @@ wawona_dispatch_inprocess(const char *path, char *const argv[],
 		return rc;
 	}
 
-	if (wwn_is_nvim_name(name) && wawona_nvim_main != NULL) {
-		while (argv[argc] != NULL)
-			argc++;
-		rc = wawona_nvim_main(argc, argv);
-		fflush(stdout);
-		fflush(stderr);
-		return rc;
-	}
 
 	if (wwn_is_ssh_name(name) && ssh_main != NULL) {
 		while (argv[argc] != NULL)
