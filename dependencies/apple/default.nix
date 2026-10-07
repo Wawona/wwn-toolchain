@@ -4,7 +4,7 @@
   TEAM_ID ? null,
   # iOS and iPadOS artifacts support the Wawona product floor. Keep using
   # the newest installed SDK; this is the deployment floor only.
-  deploymentTarget ? "11.0",
+  deploymentTarget ? "13.0",
   xcodeBaseDir ? null,
   allowedXcodeVersions ? [ ],
   nixXcodeenvtests ? null,

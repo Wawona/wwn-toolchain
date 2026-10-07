@@ -7,7 +7,7 @@ let
   isTVOS = (iosToolchain ? isTVOSToolchain) && iosToolchain.isTVOSToolchain;
   isVisionOS = iosToolchain.isVisionOSToolchain or false;
   isWatchOS = iosToolchain.isWatchOSToolchain or false;
-  defaultMin = iosToolchain.deploymentTarget or "11.0";
+  defaultMin = iosToolchain.deploymentTarget or "13.0";
   minVersion =
     if isWatchOS then "10.0"
     else if isVisionOS then "26.0"
