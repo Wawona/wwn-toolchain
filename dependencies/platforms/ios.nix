@@ -83,10 +83,14 @@ in
             set(CMAKE_OSX_DEPLOYMENT_TARGET ${xcodeUtils.deploymentTarget})
             set(CMAKE_C_COMPILER "$XCODE_CLANG")
             set(CMAKE_CXX_COMPILER "$XCODE_CLANGXX")
+            set(CMAKE_OBJC_COMPILER "$XCODE_CLANG")
+            set(CMAKE_OBJCXX_COMPILER "$XCODE_CLANGXX")
             set(CMAKE_SYSROOT "$SDKROOT")
             set(CMAKE_OSX_SYSROOT "$SDKROOT")
             set(CMAKE_C_FLAGS "${deploymentFlag}")
             set(CMAKE_CXX_FLAGS "${deploymentFlag}")
+            set(CMAKE_OBJC_FLAGS "${deploymentFlag} -fobjc-arc")
+            set(CMAKE_OBJCXX_FLAGS "${deploymentFlag} -fobjc-arc")
             EOF
 
             # Unset SDKROOT so it doesn't leak into host-side tool builds during cmake checks
@@ -126,6 +130,8 @@ in
             [binaries]
             c = '$XCODE_CLANG'
             cpp = '$XCODE_CLANGXX'
+            objc = '$XCODE_CLANG'
+            objcpp = '$XCODE_CLANGXX'
             c_for_build = '${buildPackages.clang}/bin/clang'
             cpp_for_build = '${buildPackages.clang}/bin/clang++'
             ar = 'ar'
@@ -141,6 +147,8 @@ in
             [built-in options]
             c_args = ['-arch', '$IOS_ARCH', '-isysroot', '$SDKROOT', '${deploymentFlag}', '-fPIC']
             cpp_args = ['-arch', '$IOS_ARCH', '-isysroot', '$SDKROOT', '${deploymentFlag}', '-fPIC']
+            objc_args = ['-arch', '$IOS_ARCH', '-isysroot', '$SDKROOT', '${deploymentFlag}', '-fPIC', '-fobjc-arc']
+            objcpp_args = ['-arch', '$IOS_ARCH', '-isysroot', '$SDKROOT', '${deploymentFlag}', '-fPIC', '-fobjc-arc']
             c_link_args = ['-arch', '$IOS_ARCH', '-isysroot', '$SDKROOT', '${deploymentFlag}']
             cpp_link_args = ['-arch', '$IOS_ARCH', '-isysroot', '$SDKROOT', '${deploymentFlag}']
             EOF

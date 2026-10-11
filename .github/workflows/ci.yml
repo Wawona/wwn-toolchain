@@ -29,6 +29,8 @@ jobs:
 
       - name: Verify Android meson sandbox hooks
         run: python3 ./.github/scripts/verify-android-meson-sandbox.py
+      - name: Verify Apple ObjC deployment floor
+        run: python3 ./.github/scripts/verify-apple-objc-deployment.py
       - name: lib evaluates
         run: nix eval .#lib.baseRegistry --apply builtins.attrNames
       - name: substrate instantiates (no build)

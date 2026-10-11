@@ -266,6 +266,8 @@ pkgs.stdenv.mkDerivation {
     endian = 'little'
 
     [built-in options]
+    objc_args = ['-target', '$APPLE_LINKER_TARGET', '-isysroot', '$SDKROOT', '-fPIC', '-fobjc-arc']
+    objcpp_args = ['-target', '$APPLE_LINKER_TARGET', '-isysroot', '$SDKROOT', '-fPIC', '-fobjc-arc']
     c_args = ['-target', '$APPLE_LINKER_TARGET', '-isysroot', '$SDKROOT', '-fPIC', '-D_DARWIN_C_SOURCE', '-I$EPOL_SHIM_PATH/include/libepoll-shim', '-I$EPOL_SHIM_PATH/include']
     cpp_args = ['-target', '$APPLE_LINKER_TARGET', '-isysroot', '$SDKROOT', '-fPIC', '-D_DARWIN_C_SOURCE', '-I$EPOL_SHIM_PATH/include/libepoll-shim', '-I$EPOL_SHIM_PATH/include']
     c_link_args = ['-target', '$APPLE_LINKER_TARGET', '-isysroot', '$SDKROOT', '-L$EPOL_SHIM_PATH/lib', '-lepoll-shim']

@@ -110,6 +110,8 @@ cpu = 'aarch64'
 endian = 'little'
 
 [properties]
+objc_args = ['-target', '$_TARGET', '-isysroot', '$_SDK', '-fPIC', '-fobjc-arc']
+objcpp_args = ['-target', '$_TARGET', '-isysroot', '$_SDK', '-fPIC', '-fobjc-arc']
 c_args = ['-target', '$_TARGET', '-isysroot', '$_SDK', '-fPIC']
 c_link_args = ['-target', '$_TARGET', '-isysroot', '$_SDK']
 needs_exe_wrapper = true
@@ -132,6 +134,8 @@ cpu = 'aarch64'
 endian = 'little'
 
 [properties]
+objc_args = ['-arch', '$_ARCH', '-isysroot', '$_SDK', '$_DEPLOY', '-fPIC', '-fobjc-arc']
+objcpp_args = ['-arch', '$_ARCH', '-isysroot', '$_SDK', '$_DEPLOY', '-fPIC', '-fobjc-arc']
 c_args = ['-arch', '$_ARCH', '-isysroot', '$_SDK', '$_DEPLOY', '-fPIC']
 c_link_args = ['-arch', '$_ARCH', '-isysroot', '$_SDK', '$_DEPLOY']
 needs_exe_wrapper = true

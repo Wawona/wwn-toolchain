@@ -184,8 +184,8 @@ let
       };
       tvosIosToolchain = iosToolchain // {
         isTVOSToolchain = true;
-        deploymentTarget = "11.0";
-        mkIOSBuildEnv = { simulator ? false, minVersion ? "11.0" }:
+        deploymentTarget = "17.0";
+        mkIOSBuildEnv = { simulator ? false, minVersion ? "17.0" }:
           iosToolchain.mkAppleEnv {
             sdkName = if simulator then "appletvsimulator" else "appletvos";
             platform = "tvos";
