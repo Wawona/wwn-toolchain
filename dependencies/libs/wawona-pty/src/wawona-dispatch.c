@@ -9,10 +9,12 @@
  * utility in catch_unwind so a panic cannot abort the host app.
  *
  * Exit-safety notes:
- *   - wawona_coreutils_main is declared weak: on platforms built without the
- *     `coreutils` Cargo feature (e.g. watchOS) the symbol is absent and we
- *     simply report WWN_DISPATCH_NOT_HANDLED, so libwwn-pty.a stays
- *     self-contained even though it is -force_load'd.
+ *   - wawona_coreutils_main is declared weak so libwwn-pty.a stays
+ *     self-contained when force-loaded before the Rust archive. Product
+ *     builds (including watchOS arm64) always enable the `coreutils`
+ *     Cargo feature and pull the real symbol via -Wl,-u,_wawona_coreutils_main.
+ *     Only the watchOS arm64_32 slice (no libwawona.a) falls back to a weak
+ *     stub. Absent symbol → WWN_DISPATCH_NOT_HANDLED.
  *   - fastfetch_main is weak: absent when libfastfetch.a is not force-loaded.
  *     Keep in-process client names in sync with Wawona bundling (wwn-fastfetch).
  *   - waypipe_main is weak: absent when libwawona.a is built without waypipe-ssh.
@@ -57,7 +59,8 @@ wwn_finish_inproc_cmd(int rc)
 /*
  * Provided by the Rust uutils umbrella (see patch-coreutils-source.sh):
  *   #[no_mangle] pub extern "C" fn wawona_coreutils_main(c_int, *const *const c_char) -> c_int
- * Weak so the shim links on builds without the coreutils feature.
+ * Weak so the shim links before / without the Rust archive; product
+ * watchOS/iOS/tvOS/visionOS backends always provide the real symbol.
  */
 extern int wawona_coreutils_main(int argc, const char *const *argv)
     __attribute__((weak));
@@ -435,9 +438,11 @@ wwn_find_wayland_client(const char *name)
 }
 
 /*
- * In-process safe subset (v1). Mirrors the `coreutils` feature list in
- * Cargo.toml. Sandbox-meaningless or exit-prone utilities are intentionally
- * excluded. grep/find live in separate uutils projects (later phase).
+ * In-process safe subset (v1). Authority:
+ *   wwn-coreutils/dependencies/libs/coreutils/safe-subset.txt
+ * Must match Wawona/Cargo.toml `coreutils` features (verify-ios-shell-tools.py).
+ * Sandbox-meaningless or exit-prone utilities are intentionally excluded.
+ * grep/find live in separate uutils projects (later phase).
  */
 static const char *const wwn_safe_subset[] = {
 	"ls",      "cat",     "cp",       "mv",       "rm",
@@ -914,7 +919,7 @@ wawona_dispatch_inprocess(const char *path, char *const argv[],
 	if (!wwn_in_safe_subset(name))
 		return WWN_DISPATCH_NOT_HANDLED;
 
-	/* No coreutils linked in this build (e.g. watchOS): fall through. */
+	/* No coreutils linked (e.g. watchOS arm64_32 stub-only slice): fall through. */
 	if (wawona_coreutils_main == NULL)
 		return WWN_DISPATCH_NOT_HANDLED;
 
