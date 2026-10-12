@@ -17,7 +17,7 @@ rec {
 
   # The cross-compile LIBRARY substrate + wawona-pty. Merge wwn-* fragments on
   # top of this to obtain a full registry, e.g.
-  #   registry = baseRegistry // wwn-zsh.registryFragment // wwn-weston.registryFragment;
+  #   registry = baseRegistry // wwn-zsh.registryFragment // repo-wawona-io.registryFragment;
   baseRegistry = import ../dependencies/toolchains/common/registry.nix;
 
   # Build the per-platform toolchain interface
@@ -27,7 +27,7 @@ rec {
   #
   # `registry` defaults to baseRegistry; consumers pass `baseRegistry // fragments`.
   # `extraArgs` is threaded into every recipe (intersected by its signature), used
-  # to inject cross-repo source paths such as `ilandSrc` for wwn-weston.
+  # to inject cross-repo source paths such as `ilandSrc` for catalog weston.
   mkToolchains =
     { pkgs
     , pkgsIos ? null

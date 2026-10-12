@@ -19,7 +19,7 @@ tllist, utf8proc, ffmpeg.
 `wwn-toolchain` is the **base** of the acyclic L0–L4 DAG. Everything depends on
 it; it depends on **no `wwn-*` repo**.
 
-- **Never** add `wwn-iland` / `wwn-weston` / `wwn-kmscube` (or any `wwn-*`) as a
+- **Never** add `wwn-iland` / `repo.wawona.io` / weston / kmscube (or any `wwn-*`) as a
   flake input of this repo.
 - **Never** put graphics-stack keys (`iland`, `weston`, `kmscube`, `angle`,
   `swiftshader`, Vulkan ICDs) into `baseRegistry`. Those

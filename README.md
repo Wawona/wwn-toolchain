@@ -4,7 +4,7 @@
 
 Cross-compile toolchain, library substrate, and composable Nix registry shared by
 [Wawona](https://github.com/Wawona/Wawona) and every `wwn-*` patched-software repo
-(`wwn-zsh`, `wwn-weston`, `wwn-iland`, `wwn-kmscube`, `wwn-waypipe`, `wwn-coreutils`, `wwn-foot`, `wwn-fastfetch`, `wwn-ssh`).
+(`wwn-zsh`, `wwn-iland`, `repo.wawona.io`, `wwn-waypipe`, `wwn-coreutils`, `wwn-ssh`).
 
 It provides the Apple-platform (iOS, iPadOS, tvOS, watchOS, visionOS, macOS),
 Android/Wear OS, and Linux cross builders plus the pristine cross-compiled
@@ -18,7 +18,7 @@ such as ANGLE and SwiftShader belong to `wwn-iland`, not this substrate.
 ```text
 L0 wwn-toolchain (this repo, substrate) → depends on NO wwn-* repo
    ▲
-L1 wwn-iland (graphics stack) → L2 wwn-kmscube → L3 wwn-weston → L4 Wawona
+L1 wwn-iland (graphics stack) → L4 Wawona, which also inputs repo.wawona.io
 ```
 
 This repo is the **base** of the Wawona org DAG: everything depends on it, it
@@ -53,8 +53,7 @@ let
     # merge application registry fragments on top of the base library registry:
     registry = wwn-toolchain.lib.baseRegistry
       // wwn-zsh.registryFragment
-      // wwn-fastfetch.registryFragment
-      // wwn-weston.registryFragment;
+      // repo-wawona-io.registryFragment;
     # inject cross-repo source paths recipes ask for:
     extraArgs = { ilandSrc = wwn-iland; };
   };

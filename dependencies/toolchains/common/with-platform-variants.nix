@@ -1,5 +1,5 @@
 # Shared registry-entry normalizer. Extracted so that out-of-tree registry
-# fragments (wwn-zsh, wwn-weston, ...) can build entries with identical
+# fragments (wwn-zsh, repo.wawona.io, ...) can build entries with identical
 # fallback semantics to the in-tree base registry.
 let
   firstNonNull =

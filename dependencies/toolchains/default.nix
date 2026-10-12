@@ -14,7 +14,7 @@
   registryOverride ? null,
   # Extra named args threaded into every per-platform recipe arg set. Recipes
   # opt in via their function signature (callPackageFiltered intersects args),
-  # e.g. wwn-weston requests `ilandSrc` to copy iland shim sources.
+  # e.g. catalog weston requests `ilandSrc` to copy iland shim sources.
   extraArgs ? { },
 }:
 
