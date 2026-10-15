@@ -288,6 +288,55 @@ ios_pty_focus_slot(struct ios_pty_slot *slot)
  */
 static int ios_fake_tty_forced;
 
+/*
+ * After Stop / soft-exit, stdin/out/err can be closed. The next socketpair()
+ * then reuses fd 0/1/2. ios_zsh_thread later dup2's onto STDIN_FILENO and
+ * closes the old fd 0 — that was the PTY master (log: "slot master=0"). The
+ * shell's first .zlogin print then gets EPIPE → SIGPIPE → soft-exit 13.
+ * Keep 0/1/2 reserved and bump session fds above stderr.
+ */
+static void
+ios_ensure_stdio_reserved(void)
+{
+	int fd;
+
+	for (fd = STDIN_FILENO; fd <= STDERR_FILENO; fd++) {
+		if (fcntl(fd, F_GETFD) >= 0)
+			continue;
+		if (errno != EBADF)
+			continue;
+		{
+			int n = open("/dev/null", O_RDWR | O_CLOEXEC);
+
+			if (n < 0)
+				continue;
+			if (n != fd) {
+				if (dup2(n, fd) < 0) {
+					close(n);
+					continue;
+				}
+				close(n);
+			}
+		}
+	}
+}
+
+static int
+ios_fd_above_stdio(int fd)
+{
+	int n;
+
+	if (fd < 0 || fd > STDERR_FILENO)
+		return fd;
+	n = fcntl(fd, F_DUPFD_CLOEXEC, STDERR_FILENO + 1);
+	if (n < 0)
+		n = fcntl(fd, F_DUPFD, STDERR_FILENO + 1);
+	if (n < 0)
+		return fd;
+	close(fd);
+	return n;
+}
+
 static int
 open_pipe_fallback(int *master_fd, int *slave_fd, int pty_err)
 {
@@ -295,6 +344,8 @@ open_pipe_fallback(int *master_fd, int *slave_fd, int pty_err)
 	int input_pipe[2];
 	int i;
 	struct ios_pty_slot *slot = NULL;
+
+	ios_ensure_stdio_reserved();
 
 	for (i = 0; i < WWN_IOS_MAX_PTYS; i++) {
 		if (!ios_ptys[i].live) {
@@ -324,6 +375,20 @@ open_pipe_fallback(int *master_fd, int *slave_fd, int pty_err)
 	if (pipe(input_pipe) != 0) {
 		close(fds[0]);
 		close(fds[1]);
+		return -1;
+	}
+
+	fds[0] = ios_fd_above_stdio(fds[0]);
+	fds[1] = ios_fd_above_stdio(fds[1]);
+	input_pipe[0] = ios_fd_above_stdio(input_pipe[0]);
+	input_pipe[1] = ios_fd_above_stdio(input_pipe[1]);
+	if (fds[0] <= STDERR_FILENO || fds[1] <= STDERR_FILENO ||
+	    input_pipe[0] <= STDERR_FILENO || input_pipe[1] <= STDERR_FILENO) {
+		close(fds[0]);
+		close(fds[1]);
+		close(input_pipe[0]);
+		close(input_pipe[1]);
+		errno = EMFILE;
 		return -1;
 	}
 
@@ -605,6 +670,7 @@ wwn_pty_ios_stop_shell_session(void)
 	WWN_PTY_LOG("wwn_pty: stop_shell_session, joined %d shell thread(s)\n",
 	            nthreads);
 	wwn_pty_ios_allow_new_shell_session();
+	ios_ensure_stdio_reserved();
 }
 
 static struct wwn_ios_shell_job *
@@ -986,6 +1052,20 @@ ios_zsh_thread(void *arg)
 
 	ios_shell_io_thread = pthread_self();
 	ios_shell_io_active = 1;
+
+	/*
+	 * Host holds the socketpair master. A write with no reader is EPIPE;
+	 * default SIGPIPE would soft-exit the shell (status 13) on the first
+	 * .zlogin print if master was ever closed. Ignore SIGPIPE here so a
+	 * transient close cannot kill the session; the host still sees EOF.
+	 */
+	{
+		struct sigaction sa;
+
+		memset(&sa, 0, sizeof sa);
+		sa.sa_handler = SIG_IGN;
+		(void)sigaction(SIGPIPE, &sa, NULL);
+	}
 
 	{
 		int shell_out_fd = job->slave_fd;
