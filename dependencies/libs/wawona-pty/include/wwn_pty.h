@@ -29,9 +29,13 @@ void wwn_pty_ios_kick_shell_display(void);
 void wwn_pty_ios_shell_init_done(void);
 void wwn_pty_ios_note_init_io(void);
 int wwn_pty_ios_waitpid(pid_t fake_pid, int *exit_status, int flags);
-/* Redirect target for zsh's exit()/_exit (force-include); must not kill host.
- * Use __noreturn__ spelling — consumers (e.g. foot) may #define noreturn. */
-void wwn_zsh_soft_exit(int status) __attribute__((__noreturn__));
+/*
+ * Redirect target for zsh's exit()/_exit (force-include); must not kill host.
+ * May return when a signal delivered soft-exit on a non-shell thread (e.g.
+ * main during UI layout). Shell-worker paths longjmp or pthread_exit and do
+ * not return. Do not mark noreturn: wrong-thread return keeps UIApplication.
+ */
+void wwn_zsh_soft_exit(int status);
 /* Direct PTY writes for iOS soft keyboard (bypasses wl_keyboard). */
 void wwn_ios_terminal_set_master(int master_fd);
 void wwn_ios_terminal_clear_master(int master_fd);
@@ -56,6 +60,14 @@ int wwn_pty_ios_end_inproc_cmd(void);
  * in-process dispatch loop so Foot and weston-terminal can run together.
  */
 void wwn_pty_ios_allow_new_shell_session(void);
+
+/*
+ * Latch the fake-TTY / ONLCR write path for Apple-mobile in-process shell.
+ * setenv("WAWONA_PTY_FAKE_TTY") alone is fragile: zsh rebuilds environ and a
+ * later getenv() misses it. Call once before wwn_pty_session_start so
+ * Simulator real-PTY sessions still expand LF→CRLF after zsh clears ONLCR.
+ */
+void wwn_pty_ios_force_fake_tty(void);
 
 /*
  * Host Stop path: EOF each fake TTY, join shell pthreads, then clear jobs.

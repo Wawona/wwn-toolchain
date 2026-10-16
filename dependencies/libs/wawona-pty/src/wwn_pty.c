@@ -14,6 +14,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/uio.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #include <signal.h>
@@ -514,17 +515,50 @@ static __thread jmp_buf wwn_zsh_exit_jmp;
 static __thread int wwn_zsh_exit_armed;
 static __thread int wwn_zsh_soft_exit_code;
 
-__attribute__((__noreturn__)) void
+/*
+ * Interactive zsh_main is process-global (not re-entrant). The first shell
+ * job runs zsh. Further PTY sessions get a nested dispatch loop on their
+ * own socketpair so Foot + weston-terminal can both stay up.
+ */
+static pthread_t ios_shell_io_thread;
+static int ios_shell_io_active;
+
+/*
+ * Soft-exit must never pthread_exit the UI main thread. zsh installs
+ * process-wide handlers; SIGPIPE from a .zlogin EPIPE can land on main
+ * during SwiftUI AttributeGraph update. pthread_exit(main) then tears
+ * down UIApplication (log: "main runloop, but the main thread has exited")
+ * and CA TSD cleanup hits UIKit off-queue (EXC_BREAKPOINT).
+ *
+ * Not noreturn: wrong-thread delivery returns to zhandler so the host
+ * keeps running. Shell-worker longjmp / pthread_exit still do not return.
+ */
+void
 wwn_zsh_soft_exit(int status)
 {
 	WWN_PTY_LOG("wwn_pty: soft-exit from in-process zsh status=%d (host stays up)\n",
 	            status);
-	if (wwn_zsh_exit_armed) {
-		wwn_zsh_soft_exit_code = status;
-		longjmp(wwn_zsh_exit_jmp, 1);
+
+	if (ios_shell_io_active &&
+	    pthread_equal(pthread_self(), ios_shell_io_thread)) {
+		if (wwn_zsh_exit_armed) {
+			wwn_zsh_soft_exit_code = status;
+			longjmp(wwn_zsh_exit_jmp, 1);
+		}
+		pthread_exit((void *)(intptr_t)status);
 	}
-	/* Called outside a shell session — still must not kill the host. */
-	pthread_exit((void *)(intptr_t)status);
+
+	WWN_PTY_LOG(
+	        "wwn_pty: soft-exit ignored on non-shell thread status=%d (main stays)\n",
+	        status);
+	/* Prefer EPIPE errno over process death on the next write. */
+	{
+		struct sigaction sa;
+
+		memset(&sa, 0, sizeof sa);
+		sa.sa_handler = SIG_IGN;
+		(void)sigaction(SIGPIPE, &sa, NULL);
+	}
 }
 
 struct wwn_ios_shell_job {
@@ -548,13 +582,6 @@ static pthread_mutex_t ios_shell_jobs_lock = PTHREAD_MUTEX_INITIALIZER;
 static pid_t ios_next_fake_pid = 48000;
 static pthread_mutex_t ios_stdio_lock = PTHREAD_MUTEX_INITIALIZER;
 
-/*
- * Interactive zsh_main is process-global (not re-entrant). The first shell
- * job runs zsh. Further PTY sessions get a nested dispatch loop on their
- * own socketpair so Foot + weston-terminal can both stay up.
- */
-static pthread_t ios_shell_io_thread;
-static int ios_shell_io_active;
 static _Atomic int ios_inproc_cmd_active;
 static _Atomic int ios_tty_interrupt;
 static int ios_tty_isig_enabled(void);
@@ -1004,9 +1031,19 @@ wwn_pty_ios_shell_init_done(void)
 {
 	sigset_t mask, pending;
 	int sig;
+	struct sigaction sa;
 
 	ios_shell_init_done = 1;
 	WWN_PTY_LOG("wwn_pty: zsh init scripts finished\n");
+
+	/*
+	 * zsh reinstalls process-wide signal handlers during init. Keep
+	 * SIGPIPE ignored so a later EPIPE cannot soft-exit via zhandler on
+	 * the UI main thread (status 13).
+	 */
+	memset(&sa, 0, sizeof sa);
+	sa.sa_handler = SIG_IGN;
+	(void)sigaction(SIGPIPE, &sa, NULL);
 
 	sigemptyset(&mask);
 	sigaddset(&mask, SIGWINCH);
@@ -2022,6 +2059,14 @@ wwn_init_fake_termios(void)
 	wwn_fake_termios_init = true;
 }
 
+void
+wwn_pty_ios_force_fake_tty(void)
+{
+	ios_fake_tty_forced = 1;
+	setenv("WAWONA_PTY_FAKE_TTY", "1", 1);
+	wwn_init_fake_termios();
+}
+
 static int
 ios_tty_isig_enabled(void)
 {
@@ -2069,11 +2114,65 @@ wwn_read(int fd, void *buf, size_t count)
 	return n;
 }
 
+/*
+ * Expand LF→CRLF on shell stdout. zsh ZLE clears kernel ONLCR; Simulator
+ * often has a real POSIX PTY so the kernel stops converting. Libc printf
+ * paths often call writev, so both write and writev must expand.
+ *
+ * ios_fake_tty_forced (wwn_pty_ios_force_fake_tty) also enables this for any
+ * thread writing stdout while the shell session is armed.
+ */
+static int
+wwn_stdout_needs_onlcr(int fd)
+{
+	if (fd != STDOUT_FILENO)
+		return 0;
+	if (ios_shell_io_active || ios_fake_tty_forced)
+		return 1;
+	if (wwn_fake_tty_active() && wwn_fake_termios_init &&
+	    (wwn_fake_termios.c_oflag & OPOST) &&
+	    (wwn_fake_termios.c_oflag & ONLCR))
+		return 1;
+	return 0;
+}
+
+static ssize_t
+wwn_write_expand_onlcr(int fd, const void *buf, size_t count,
+                       ssize_t (*real_write)(int, const void *, size_t))
+{
+	const char *p = (const char *)buf;
+	size_t i, last = 0;
+	ssize_t total = 0;
+	ssize_t ret;
+
+	for (i = 0; i < count; i++) {
+		if (p[i] == '\n') {
+			if (i > last) {
+				ret = real_write(fd, p + last, i - last);
+				if (ret < 0)
+					return (total > 0 ? total : -1);
+				total += ret;
+			}
+			ret = real_write(fd, "\r\n", 2);
+			if (ret < 0)
+				return (total > 0 ? total : -1);
+			total += 1; /* report original \\n byte count */
+			last = i + 1;
+		}
+	}
+	if (last < count) {
+		ret = real_write(fd, p + last, count - last);
+		if (ret < 0)
+			return (total > 0 ? total : -1);
+		total += ret;
+	}
+	return total;
+}
+
 static ssize_t
 wwn_write(int fd, const void *buf, size_t count)
 {
 	ssize_t (*real_write)(int, const void *, size_t);
-	ssize_t ret;
 
 	real_write = (ssize_t (*)(int, const void *, size_t))dlsym(RTLD_NEXT, "write");
 	if (real_write == NULL) {
@@ -2086,43 +2185,53 @@ wwn_write(int fd, const void *buf, size_t count)
 		return -1;
 	}
 
-	if (wwn_fake_tty_active() && (fd == STDOUT_FILENO || fd == STDERR_FILENO) && count > 0) {
-		/*
-		 * Always expand LF→CRLF for in-process shell stdout. zsh ZLE clears
-		 * ONLCR via tcsetattr; without this, weston-terminal receives bare
-		 * \\n and keeps the cursor column (stair-stepped/indented lines).
-		 */
-		int do_onlcr = (fd == STDOUT_FILENO && ios_shell_io_active);
-		if (!do_onlcr && wwn_fake_termios_init &&
-		    (wwn_fake_termios.c_oflag & OPOST) && (wwn_fake_termios.c_oflag & ONLCR))
-			do_onlcr = 1;
-		if (do_onlcr) {
-			const char *p = (const char *)buf;
-			size_t i, last = 0;
-			ssize_t total = 0;
-			for (i = 0; i < count; i++) {
-				if (p[i] == '\n') {
-					if (i > last) {
-						ret = real_write(fd, p + last, i - last);
-						if (ret < 0) return (total > 0 ? total : -1);
-						total += ret;
-					}
-					ret = real_write(fd, "\r\n", 2);
-					if (ret < 0) return (total > 0 ? total : -1);
-					total += 1; /* report original \n byte count */
-					last = i + 1;
-				}
-			}
-			if (last < count) {
-				ret = real_write(fd, p + last, count - last);
-				if (ret < 0) return (total > 0 ? total : -1);
-				total += ret;
-			}
-			return total;
-		}
-	}
+	if (count > 0 && wwn_stdout_needs_onlcr(fd))
+		return wwn_write_expand_onlcr(fd, buf, count, real_write);
 
 	return real_write(fd, buf, count);
+}
+
+static ssize_t
+wwn_writev(int fd, const struct iovec *iov, int iovcnt)
+{
+	ssize_t (*real_writev)(int, const struct iovec *, int);
+	ssize_t (*real_write)(int, const void *, size_t);
+	ssize_t total = 0;
+	int i;
+
+	real_writev =
+	    (ssize_t (*)(int, const struct iovec *, int))dlsym(RTLD_NEXT, "writev");
+	if (real_writev == NULL) {
+		errno = ENOSYS;
+		return -1;
+	}
+
+	if (ios_inproc_stdio_interrupted(fd)) {
+		errno = EIO;
+		return -1;
+	}
+
+	if (!wwn_stdout_needs_onlcr(fd) || iov == NULL || iovcnt <= 0)
+		return real_writev(fd, iov, iovcnt);
+
+	real_write = (ssize_t (*)(int, const void *, size_t))dlsym(RTLD_NEXT, "write");
+	if (real_write == NULL) {
+		errno = ENOSYS;
+		return -1;
+	}
+
+	for (i = 0; i < iovcnt; i++) {
+		ssize_t n;
+
+		if (iov[i].iov_base == NULL || iov[i].iov_len == 0)
+			continue;
+		n = wwn_write_expand_onlcr(fd, iov[i].iov_base, iov[i].iov_len,
+		                          real_write);
+		if (n < 0)
+			return (total > 0 ? total : -1);
+		total += n;
+	}
+	return total;
 }
 
 static int
@@ -2243,6 +2352,12 @@ __attribute__((used)) static const wwn_interpose_t wwn_interpose_write
     __attribute__((section("__DATA,__interpose"))) = {
 	.replacement = (const void *)(unsigned long)&wwn_write,
 	.replacee = (const void *)(unsigned long)&write,
+};
+
+__attribute__((used)) static const wwn_interpose_t wwn_interpose_writev
+    __attribute__((section("__DATA,__interpose"))) = {
+	.replacement = (const void *)(unsigned long)&wwn_writev,
+	.replacee = (const void *)(unsigned long)&writev,
 };
 
 __attribute__((used)) static const wwn_interpose_t wwn_interpose_isatty

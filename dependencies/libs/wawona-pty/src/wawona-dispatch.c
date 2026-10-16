@@ -482,7 +482,9 @@ wwn_in_safe_subset(const char *name)
 static int
 wwn_run_clear(void)
 {
-	fputs("\033[2J\033[H", stdout);
+	/* Home + erase display + erase scrollback. Matches zsh clear(); ESC[2J
+	 * alone archives into Wawona Terminal history and looks like a no-op. */
+	fputs("\033[H\033[2J\033[3J", stdout);
 	fflush(stdout);
 	return 0;
 }
