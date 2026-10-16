@@ -2136,6 +2136,13 @@ wwn_stdout_needs_onlcr(int fd)
 	return 0;
 }
 
+/*
+ * Bare LF → CRLF. Already-CRLF (fastfetch / printf that emits \r\n) must
+ * pass through: expanding again yields \r\r\n and breaks layout. Track a
+ * trailing CR across writev iovecs on this thread.
+ */
+static __thread int wwn_onlcr_prev_was_cr;
+
 static ssize_t
 wwn_write_expand_onlcr(int fd, const void *buf, size_t count,
                        ssize_t (*real_write)(int, const void *, size_t))
@@ -2144,9 +2151,10 @@ wwn_write_expand_onlcr(int fd, const void *buf, size_t count,
 	size_t i, last = 0;
 	ssize_t total = 0;
 	ssize_t ret;
+	int prev_cr = wwn_onlcr_prev_was_cr;
 
 	for (i = 0; i < count; i++) {
-		if (p[i] == '\n') {
+		if (p[i] == '\n' && !prev_cr) {
 			if (i > last) {
 				ret = real_write(fd, p + last, i - last);
 				if (ret < 0)
@@ -2158,7 +2166,10 @@ wwn_write_expand_onlcr(int fd, const void *buf, size_t count,
 				return (total > 0 ? total : -1);
 			total += 1; /* report original \\n byte count */
 			last = i + 1;
+			prev_cr = 0;
+			continue;
 		}
+		prev_cr = (p[i] == '\r');
 	}
 	if (last < count) {
 		ret = real_write(fd, p + last, count - last);
@@ -2166,6 +2177,7 @@ wwn_write_expand_onlcr(int fd, const void *buf, size_t count,
 			return (total > 0 ? total : -1);
 		total += ret;
 	}
+	wwn_onlcr_prev_was_cr = prev_cr;
 	return total;
 }
 
