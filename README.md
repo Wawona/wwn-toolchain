@@ -4,7 +4,7 @@
 
 Cross-compile toolchain, library substrate, and composable Nix registry shared by
 [Wawona](https://github.com/Wawona/Wawona) and every `wwn-*` patched-software repo
-(`wwn-zsh`, `wwn-iland`, `repo.wawona.io`, `wwn-waypipe`, `wwn-coreutils`, `wwn-ssh`).
+(`wwn-zsh`, `iLand`, `repo.wawona.io`, `wwn-waypipe`, `wwn-uutils-rs`, `wwn-fastfetch`, `wwn-ssh`, `iomfb-rs`, `iowatchdog-tools`).
 
 It provides the Apple-platform (iOS, iPadOS, tvOS, watchOS, visionOS, macOS),
 Android/Wear OS, and Linux cross builders plus the pristine cross-compiled
