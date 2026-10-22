@@ -187,9 +187,38 @@ stdenv.mkDerivation (
         -u LD \
         xcodebuild ${targetFlag} -configuration ${_configuration} ${
         lib.optionalString (scheme != null) "-scheme ${scheme}"
-      } -sdk ${_sdk} TARGETED_DEVICE_FAMILY="1, 2" ONLY_ACTIVE_ARCH=NO CONFIGURATION_TEMP_DIR=$TMPDIR CONFIGURATION_BUILD_DIR=$out ${
+      } -sdk ${_sdk} TARGETED_DEVICE_FAMILY="1, 2" ONLY_ACTIVE_ARCH=NO CONFIGURATION_TEMP_DIR=$TMPDIR SYMROOT=$TMPDIR/wawona-sym ${
         lib.optionalString (generateIPA || generateXCArchive) "-archivePath \"${name}.xcarchive\" archive"
       } ${lib.optionalString (release && !automaticProvisioning) ''PROVISIONING_PROFILE=$PROVISIONING_PROFILE OTHER_CODE_SIGN_FLAGS="--keychain $HOME/Library/Keychains/$keychainName-db"''} ${lib.optionalString (release && automaticProvisioning) ''-allowProvisioningUpdates DEVELOPMENT_TEAM=${developmentTeam} CODE_SIGN_STYLE=Automatic''} ${xcodeFlags}
+
+      # Do not set CONFIGURATION_BUILD_DIR to one directory. The iOS host and
+      # the watch companion are both named ${name}.app, and one directory
+      # makes Xcode fail with "Multiple commands produce". SYMROOT keeps
+      # Debug-iphonesimulator and Debug-watchsimulator apart. The host app
+      # for this SDK is what $out must contain.
+      symroot="$TMPDIR/wawona-sym"
+      host_app=""
+      for cand in \
+        "$symroot/${_configuration}-${_sdk}/${name}.app" \
+        "$symroot/${_configuration}/${name}.app" \
+        "$symroot/${_configuration}-macosx/${name}.app"
+      do
+        if [ -d "$cand" ]; then
+          host_app="$cand"
+          break
+        fi
+      done
+      if [ -n "$host_app" ]; then
+        mkdir -p "$out"
+        rm -rf "$out/${name}.app"
+        cp -R "$host_app" "$out/${name}.app"
+      ${lib.optionalString (!(generateIPA || generateXCArchive)) ''
+      elif [ ! -d "$out/${name}.app" ]; then
+        echo "error: ${name}.app for sdk ${_sdk} was not produced under $symroot" >&2
+        find "$symroot" -maxdepth 3 -type d -name '*.app' >&2 || true
+        exit 1
+      ''}
+      fi
 
       ${lib.optionalString release ''
         ${lib.optionalString generateIPA ''
