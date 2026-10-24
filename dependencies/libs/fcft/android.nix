@@ -40,6 +40,8 @@ pkgs.stdenv.mkDerivation (androidMesonSandbox.apply {
   pname = "fcft";
   version = "3.3.3";
   inherit src;
+  # Darwin fixup would reindex this GNU Android archive with host cctools.
+  dontStrip = true;
 
   nativeBuildInputs = with buildPackages; [
     meson

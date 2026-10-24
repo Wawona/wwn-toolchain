@@ -28,6 +28,8 @@ in
 pkgs.stdenv.mkDerivation (androidMesonSandbox.apply {
   name = "freetype-android";
   inherit src;
+  # Darwin fixup would reindex this GNU Android archive with host cctools.
+  dontStrip = true;
 
   nativeBuildInputs = with buildPackages; [
     meson
