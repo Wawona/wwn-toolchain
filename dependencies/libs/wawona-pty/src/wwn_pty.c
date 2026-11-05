@@ -585,6 +585,7 @@ static pthread_mutex_t ios_stdio_lock = PTHREAD_MUTEX_INITIALIZER;
 static _Atomic int ios_inproc_cmd_active;
 static _Atomic int ios_tty_interrupt;
 static int ios_tty_isig_enabled(void);
+static void ios_ensure_wasm_wake_handler(void);
 
 void
 wwn_pty_ios_begin_inproc_cmd(void)
@@ -673,8 +674,20 @@ wwn_pty_ios_stop_shell_session(void)
 		threads[nthreads++] = ios_shell_io_thread;
 	pthread_mutex_unlock(&ios_shell_jobs_lock);
 
-	if (nthreads > 0 && ios_shell_io_active)
-		(void)pthread_kill(ios_shell_io_thread, SIGINT);
+	/* zsh blocks in read() on the pty input pipe. Only EOF on that pipe
+	 * wakes it; close every write end before joining or the join hangs. */
+	ios_pty_input_write = -1;
+	for (i = 0; i < WWN_IOS_MAX_PTYS; i++) {
+		if (ios_ptys[i].live)
+			ios_close_fd(&ios_ptys[i].input_write);
+	}
+
+	/* Wake blocked read with SIGUSR1 (empty handler). Never SIGINT:
+	 * LLDB stops the host process; zsh's SIGINT path can abort Mode A. */
+	if (nthreads > 0 && ios_shell_io_active) {
+		ios_ensure_wasm_wake_handler();
+		(void)pthread_kill(ios_shell_io_thread, SIGUSR1);
+	}
 
 	for (i = 0; i < nthreads; i++) {
 		void *rv;
@@ -825,29 +838,19 @@ ios_wake_shell_thread_for_wasm(void)
 static int
 ios_deliver_shell_tty_signal(unsigned char byte)
 {
-	int sig = 0;
-	int i;
-	pthread_t target = 0;
-	int found = 0;
-	int inject_fd;
-	int pipe_only = 0;
+	int woke;
 
-	if (byte == 3)
-		sig = SIGINT;
-	else if (byte == 28)
-		sig = SIGQUIT;
-	else
+	if (byte != 3 && byte != 28)
 		return 0;
 
-	/* Cooperative guest stop. Do not pthread_kill(SIGINT) while wasm is
-	 * on the zsh stack (handler / process abort). Epoch + socket
-	 * shutdown stop the interpreter / GUI; SIGUSR1 only wakes a
-	 * blocking WASI stdin read so the epoch trap can run. */
+	/* Never pthread_kill(SIGINT|SIGQUIT) into the in-process shell
+	 * thread. Under LLDB that stops the host app (tvOS ^C crash).
+	 * Without a debugger, zsh's SIGINT handler can abort Mode A.
+	 * Soft path only: control byte to ZLE, or interrupt latch +
+	 * SIGUSR1 wake for in-process / wasm guests. */
 	if (wawona_wasm_request_interrupt != NULL)
 		wawona_wasm_request_interrupt();
 	if (wawona_wasm_is_running != NULL && wawona_wasm_is_running() != 0) {
-		int woke;
-
 		atomic_store(&ios_tty_interrupt, 1);
 		woke = ios_wake_shell_thread_for_wasm();
 		WWN_PTY_LOG(
@@ -856,50 +859,23 @@ ios_deliver_shell_tty_signal(unsigned char byte)
 		return 1;
 	}
 
-	/* ZLE raw mode clears ISIG. Then VINTR is a byte, not a signal.
-	 * A dispatched in-process command (yes/cat/wasm) must stop even if
-	 * ZLE left the fake tty in raw mode. */
-	if (!ios_tty_isig_enabled() &&
-	    atomic_load(&ios_inproc_cmd_active) == 0) {
+	/* Idle line editor (ZLE or cooked). Always inject the byte so
+	 * ^C clears the line / shows ^C. Do not trust fake-tty ISIG: MotD
+	 * and early prompt can still have ISIG on while ZLE owns input. */
+	if (atomic_load(&ios_inproc_cmd_active) == 0) {
 		WWN_PTY_LOG(
-		        "wwn_pty: control byte 0x%02x passed to ZLE (ISIG off)\n",
-		        byte);
+		        "wwn_pty: control byte 0x%02x passed to line editor (ISIG=%d)\n",
+		        byte, ios_tty_isig_enabled());
 		return 0;
 	}
+
+	/* Dispatched in-process command (yes/cat/…). Latch + SIGUSR1 wake
+	 * so interposed stdin/stdout return EIO (uutils retries EINTR). */
 	atomic_store(&ios_tty_interrupt, 1);
-
-	pthread_mutex_lock(&ios_terminal_master_lock);
-	inject_fd = ios_pty_input_write;
-	pthread_mutex_unlock(&ios_terminal_master_lock);
-
-	pthread_mutex_lock(&ios_shell_jobs_lock);
-	for (i = 0; i < WWN_IOS_MAX_SHELL_JOBS; i++) {
-		if (!ios_shell_jobs[i].running)
-			continue;
-		if (inject_fd >= 0 && ios_shell_jobs[i].input_write_fd == inject_fd) {
-			if (ios_shell_jobs[i].nested)
-				pipe_only = 1;
-			else {
-				target = ios_shell_jobs[i].thread;
-				found = 1;
-			}
-			break;
-		}
-	}
-	if (!found && !pipe_only && ios_shell_io_active) {
-		target = ios_shell_io_thread;
-		found = 1;
-	}
-	pthread_mutex_unlock(&ios_shell_jobs_lock);
-
-	if (pipe_only)
-		return 0;
-
-	if (!found)
-		return 0;
-
-	(void)pthread_kill(target, sig);
-	WWN_PTY_LOG("wwn_pty: delivered signal %d for control byte 0x%02x\n", sig, byte);
+	woke = ios_wake_shell_thread_for_wasm();
+	WWN_PTY_LOG(
+	        "wwn_pty: inproc interrupt for control byte 0x%02x (SIGUSR1 wake=%d)\n",
+	        byte, woke);
 	return 1;
 }
 
